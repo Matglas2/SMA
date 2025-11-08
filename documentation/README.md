@@ -1,6 +1,12 @@
 # SMA Documentation
 
-This folder contains documentation for all features in the SMA application.
+This folder contains comprehensive documentation for the SMA (Salesforce Metadata Assistant) application.
+
+## Core Documentation
+
+- **[REQUIREMENTS.md](REQUIREMENTS.md)** - Complete requirements tracking, feature roadmap, and evolution timeline
+- **[DATABASE_DESIGN.md](DATABASE_DESIGN.md)** - Database schema design, current and planned tables
+- **[setup.md](setup.md)** - Installation and setup guide
 
 ## Documentation Standards
 
@@ -11,6 +17,10 @@ All features must be documented in this folder with the following information:
 - Technical implementation details
 - Database schema changes (if any)
 
-## Feature Index
+## Implemented Features
 
-1. [Hello Command](features/hello-command.md) - Greet users with inspirational quotes and ASCII art
+1. [Hello Command](features/hello-command.md) - Greet users with inspirational quotes and ASCII art (Phase 0 demo)
+
+## Planned Features (MVP)
+
+See [REQUIREMENTS.md](REQUIREMENTS.md) for the complete list of planned Salesforce integration features.

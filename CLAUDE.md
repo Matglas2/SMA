@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SMA is a SQLite-powered CLI application built with Python. It runs on Windows and provides various command-line utilities with persistent data storage.
+**SMA (Salesforce Metadata Assistant)** is a CLI-based tool designed to help troubleshoot and analyze Salesforce environments by querying metadata, automations, and code dependencies.
+
+### Vision
+Save time during Salesforce troubleshooting by providing quick answers to metadata and dependency questions that normally require manual exploration through the Salesforce UI or metadata files.
+
+### Current Status
+Phase 0: Basic CLI prototype with demo features (hello command, quote database). The Salesforce integration features are planned for the MVP phase.
+
+See [REQUIREMENTS.md](documentation/REQUIREMENTS.md) for complete feature roadmap and evolution timeline.
 
 ## Project Structure
 
@@ -100,8 +108,10 @@ This workflow ensures:
 
 ### Current Schema
 
-- `greetings` table: Tracks hello command usage with timestamps and usernames
-- `quotes` table: Stores inspirational quotes with text, author, and timestamp
+- `greetings` table: Tracks hello command usage with timestamps and usernames (demo feature)
+- `quotes` table: Stores inspirational quotes with text, author, and timestamp (demo feature)
+
+For planned Salesforce metadata schema, see [DATABASE_DESIGN.md](documentation/DATABASE_DESIGN.md)
 
 ## CLI Framework
 
@@ -167,8 +177,22 @@ Each feature document should include:
 
 ## Current Features
 
+### Phase 0: Demo Features (✅ Implemented)
+
 1. **hello command** (`sma hello`): Greets users with personalized messages, random inspiring quotes from database, and ASCII art. Logs greetings to database.
    - See: `documentation/features/hello-command.md`
+
+### MVP: Salesforce Integration (📋 Planned)
+
+The following features are planned for the MVP release:
+- OAuth authentication with Salesforce
+- Real-time metadata retrieval and local caching
+- Field/object/flow dependency queries
+- Apex code analysis and indexing
+- Azure DevOps repository integration
+- CLI autocomplete for Salesforce objects and fields
+
+See [REQUIREMENTS.md](documentation/REQUIREMENTS.md) for complete MVP specifications and user requirements.
 
 ## Windows-Specific Notes
 
