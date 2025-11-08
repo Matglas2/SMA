@@ -4,7 +4,12 @@ import click
 import random
 import os
 from datetime import datetime
+from rich.console import Console
+from rich.table import Table
 from .database import Database
+from .salesforce.connection import SalesforceConnection
+
+console = Console()
 
 
 # ASCII art collection (Windows-compatible)
@@ -131,6 +136,186 @@ def hello(name):
         click.echo(click.style(f"  This is greeting #{total_greetings}! ", fg='magenta'))
 
     click.echo("=" * 60)
+
+
+# Salesforce commands group
+@main.group(name='sf')
+def salesforce():
+    """Salesforce integration commands."""
+    pass
+
+
+@salesforce.command(name='connect')
+@click.option('--alias', required=True, help='Alias for this org (e.g., "production", "sandbox")')
+@click.option('--client-id', required=True, help='Connected App Client ID')
+@click.option('--client-secret', required=True, help='Connected App Client Secret')
+@click.option('--sandbox', is_flag=True, help='Connect to sandbox (test.salesforce.com)')
+@click.option('--instance-url', default=None, help='Custom instance URL')
+def sf_connect(alias, client_id, client_secret, sandbox, instance_url):
+    """Connect to Salesforce using OAuth.
+
+    You need to create a Connected App in Salesforce first:
+    1. Setup → App Manager → New Connected App
+    2. Enable OAuth Settings
+    3. Callback URL: http://localhost:8765/oauth/callback
+    4. OAuth Scopes: Full access (full), Perform requests at any time (refresh_token)
+    5. Copy Client ID and Client Secret
+
+    Example:
+        sma sf connect --alias production --client-id YOUR_ID --client-secret YOUR_SECRET
+        sma sf connect --alias sandbox --client-id YOUR_ID --client-secret YOUR_SECRET --sandbox
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            console.print("\n[bold cyan]Connecting to Salesforce...[/bold cyan]\n")
+
+            # Determine instance URL
+            login_url = instance_url
+            if login_url is None:
+                login_url = "https://test.salesforce.com" if sandbox else "https://login.salesforce.com"
+
+            # Connect
+            result = conn_manager.connect(
+                org_alias=alias,
+                client_id=client_id,
+                client_secret=client_secret,
+                instance_url=login_url,
+                sandbox=sandbox
+            )
+
+            console.print(f"\n[bold green]✓ Successfully connected to Salesforce![/bold green]\n")
+            console.print(f"Org Name: [cyan]{result['org_name']}[/cyan]")
+            console.print(f"Org Type: [cyan]{result['org_type']}[/cyan]")
+            console.print(f"Org ID: [cyan]{result['org_id']}[/cyan]")
+            console.print(f"Instance: [cyan]{result['instance_url']}[/cyan]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]✗ Connection failed:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@salesforce.command(name='status')
+def sf_status():
+    """Show current Salesforce connection status."""
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+            status = conn_manager.get_status()
+
+            if status is None:
+                console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                console.print("Run [cyan]sma sf connect[/cyan] to connect.\n")
+                return
+
+            console.print("\n[bold cyan]Salesforce Connection Status[/bold cyan]\n")
+            console.print(f"Org Name: [green]{status['org_name']}[/green]")
+            console.print(f"Org Type: [green]{status['org_type']}[/green]")
+            console.print(f"Org ID: [green]{status['org_id']}[/green]")
+            console.print(f"Instance: [green]{status['instance_url']}[/green]")
+
+            if status['last_sync']:
+                console.print(f"Last Sync: [green]{status['last_sync']}[/green]")
+            else:
+                console.print(f"Last Sync: [yellow]Never[/yellow]")
+
+            console.print()
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@salesforce.command(name='list')
+def sf_list():
+    """List all connected Salesforce orgs."""
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+            orgs = conn_manager.list_orgs()
+
+            if not orgs:
+                console.print("\n[yellow]No connected orgs.[/yellow]")
+                console.print("Run [cyan]sma sf connect[/cyan] to connect.\n")
+                return
+
+            # Create table
+            table = Table(title="Connected Salesforce Orgs", show_header=True, header_style="bold cyan")
+            table.add_column("Active", style="green")
+            table.add_column("Alias", style="cyan")
+            table.add_column("Type")
+            table.add_column("Org ID")
+            table.add_column("Last Sync")
+
+            for org in orgs:
+                active = "●" if org['is_active'] else ""
+                last_sync = org['last_sync'] if org['last_sync'] else "Never"
+
+                table.add_row(
+                    active,
+                    org['org_name'],
+                    org['org_type'],
+                    org['org_id'],
+                    last_sync
+                )
+
+            console.print()
+            console.print(table)
+            console.print()
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@salesforce.command(name='switch')
+@click.argument('alias')
+def sf_switch(alias):
+    """Switch active Salesforce org.
+
+    Example:
+        sma sf switch production
+        sma sf switch sandbox
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+            conn_manager.switch_org(alias)
+
+            console.print(f"\n[bold green]✓ Switched to org:[/bold green] [cyan]{alias}[/cyan]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]✗ Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@salesforce.command(name='disconnect')
+@click.option('--alias', default=None, help='Org alias to disconnect (disconnects active org if not specified)')
+@click.confirmation_option(prompt='Are you sure you want to disconnect?')
+def sf_disconnect(alias):
+    """Disconnect from Salesforce org.
+
+    Example:
+        sma sf disconnect              # Disconnect active org
+        sma sf disconnect --alias sandbox
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            if alias is None:
+                status = conn_manager.get_status()
+                if status:
+                    alias = status['org_name']
+
+            conn_manager.disconnect(alias)
+
+            console.print(f"\n[bold green]✓ Disconnected from:[/bold green] [cyan]{alias}[/cyan]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]✗ Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
 
 
 if __name__ == '__main__':

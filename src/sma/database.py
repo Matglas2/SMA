@@ -56,6 +56,30 @@ class Database:
             )
         """)
 
+        # Table for Salesforce organizations
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS salesforce_orgs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                org_id TEXT UNIQUE NOT NULL,
+                instance_url TEXT NOT NULL,
+                org_name TEXT NOT NULL,
+                org_type TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                last_sync DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create indexes for Salesforce orgs
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_org_id ON salesforce_orgs(org_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_is_active ON salesforce_orgs(is_active)
+        """)
+
         self.conn.commit()
         self._seed_quotes(cursor)
 

@@ -19,7 +19,11 @@ All features must be documented in this folder with the following information:
 
 ## Implemented Features
 
-1. [Hello Command](features/hello-command.md) - Greet users with inspirational quotes and ASCII art (Phase 0 demo)
+### Phase 0: Demo Features
+1. [Hello Command](features/hello-command.md) - Greet users with inspirational quotes and ASCII art
+
+### MVP Phase 1: Authentication
+2. [Salesforce Authentication](features/salesforce-authentication.md) - OAuth 2.0 connection to Salesforce orgs
 
 ## Planned Features (MVP)
 
