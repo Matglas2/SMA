@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/Scripts/sma.exe:*)",
+      "Bash(python -m sma.cli:*)",
+      "Bash(pip install:*)",
+      "Bash(sma hello:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
