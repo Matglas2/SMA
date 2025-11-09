@@ -3,8 +3,11 @@
 import webbrowser
 import keyring
 import json
+import base64
+import hashlib
+import secrets
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 from typing import Optional, Dict, Any
 import requests
 from threading import Thread
@@ -79,21 +82,44 @@ class SalesforceAuth:
         self.client_id = client_id
         self.client_secret = client_secret
         self.instance_url = instance_url
+        self.code_verifier: Optional[str] = None
+
+    def _generate_pkce_pair(self) -> tuple[str, str]:
+        """Generate PKCE code verifier and code challenge.
+
+        Returns:
+            Tuple of (code_verifier, code_challenge)
+        """
+        # Generate code verifier (43-128 characters, base64url encoded)
+        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8')
+        code_verifier = code_verifier.rstrip('=')  # Remove padding
+
+        # Generate code challenge (SHA256 hash of verifier, base64url encoded)
+        code_challenge = hashlib.sha256(code_verifier.encode('utf-8')).digest()
+        code_challenge = base64.urlsafe_b64encode(code_challenge).decode('utf-8')
+        code_challenge = code_challenge.rstrip('=')  # Remove padding
+
+        return code_verifier, code_challenge
 
     def get_authorization_url(self) -> str:
-        """Generate OAuth authorization URL.
+        """Generate OAuth authorization URL with PKCE.
 
         Returns:
             Authorization URL to open in browser
         """
+        # Generate PKCE parameters
+        self.code_verifier, code_challenge = self._generate_pkce_pair()
+
         params = {
             'response_type': 'code',
             'client_id': self.client_id,
             'redirect_uri': self.CALLBACK_URL,
-            'scope': 'api refresh_token'
+            'scope': 'api full refresh_token',
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256'
         }
 
-        param_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        param_string = urlencode(params)
         return f"{self.instance_url}/services/oauth2/authorize?{param_string}"
 
     def start_callback_server(self, timeout: int = 300) -> Optional[str]:
@@ -125,7 +151,7 @@ class SalesforceAuth:
         return OAuthCallbackHandler.authorization_code
 
     def exchange_code_for_token(self, authorization_code: str) -> Dict[str, Any]:
-        """Exchange authorization code for access token.
+        """Exchange authorization code for access token using PKCE.
 
         Args:
             authorization_code: Code received from OAuth callback
@@ -143,7 +169,8 @@ class SalesforceAuth:
             'code': authorization_code,
             'client_id': self.client_id,
             'client_secret': self.client_secret,
-            'redirect_uri': self.CALLBACK_URL
+            'redirect_uri': self.CALLBACK_URL,
+            'code_verifier': self.code_verifier  # PKCE code verifier
         }
 
         response = requests.post(token_url, data=data)
