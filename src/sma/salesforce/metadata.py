@@ -113,18 +113,39 @@ class MetadataSync:
             # Store full metadata as JSON
             metadata_json = json.dumps(sobject)
 
-            # Insert or update sobject
+            # Check if sobject already exists
             cursor.execute("""
-                INSERT OR REPLACE INTO sobjects
-                (org_id, api_name, label, plural_label, is_custom, key_prefix,
-                 is_queryable, is_createable, is_updateable, is_deletable,
-                 metadata, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                self.org_id, api_name, label, plural_label, is_custom, key_prefix,
-                is_queryable, is_createable, is_updateable, is_deletable,
-                metadata_json, datetime.now().isoformat()
-            ))
+                SELECT id FROM sobjects
+                WHERE org_id = ? AND api_name = ?
+            """, (self.org_id, api_name))
+            existing = cursor.fetchone()
+
+            if existing:
+                # Update existing record (preserves ID and foreign key relationships)
+                cursor.execute("""
+                    UPDATE sobjects
+                    SET label = ?, plural_label = ?, is_custom = ?, key_prefix = ?,
+                        is_queryable = ?, is_createable = ?, is_updateable = ?, is_deletable = ?,
+                        metadata = ?, synced_at = ?
+                    WHERE id = ?
+                """, (
+                    label, plural_label, is_custom, key_prefix,
+                    is_queryable, is_createable, is_updateable, is_deletable,
+                    metadata_json, datetime.now().isoformat(), existing['id']
+                ))
+            else:
+                # Insert new record
+                cursor.execute("""
+                    INSERT INTO sobjects
+                    (org_id, api_name, label, plural_label, is_custom, key_prefix,
+                     is_queryable, is_createable, is_updateable, is_deletable,
+                     metadata, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    self.org_id, api_name, label, plural_label, is_custom, key_prefix,
+                    is_queryable, is_createable, is_updateable, is_deletable,
+                    metadata_json, datetime.now().isoformat()
+                ))
 
             synced_count += 1
 
@@ -208,19 +229,41 @@ class MetadataSync:
         # Store full metadata as JSON
         metadata_json = json.dumps(field_data)
 
-        # Insert or update field
+        # Check if field already exists
         cursor.execute("""
-            INSERT OR REPLACE INTO fields
-            (org_id, sobject_id, api_name, label, type, length, is_custom,
-             is_required, is_unique, reference_to, relationship_name, formula,
-             default_value, help_text, metadata, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            self.org_id, sobject_id, api_name, label, field_type, length,
-            is_custom, is_required, is_unique, reference_to, relationship_name,
-            formula, default_value, help_text, metadata_json,
-            datetime.now().isoformat()
-        ))
+            SELECT id FROM fields
+            WHERE org_id = ? AND sobject_id = ? AND api_name = ?
+        """, (self.org_id, sobject_id, api_name))
+        existing = cursor.fetchone()
+
+        if existing:
+            # Update existing record (preserves ID)
+            cursor.execute("""
+                UPDATE fields
+                SET label = ?, type = ?, length = ?, is_custom = ?,
+                    is_required = ?, is_unique = ?, reference_to = ?, relationship_name = ?,
+                    formula = ?, default_value = ?, help_text = ?, metadata = ?, synced_at = ?
+                WHERE id = ?
+            """, (
+                label, field_type, length, is_custom,
+                is_required, is_unique, reference_to, relationship_name,
+                formula, default_value, help_text, metadata_json,
+                datetime.now().isoformat(), existing['id']
+            ))
+        else:
+            # Insert new record
+            cursor.execute("""
+                INSERT INTO fields
+                (org_id, sobject_id, api_name, label, type, length, is_custom,
+                 is_required, is_unique, reference_to, relationship_name, formula,
+                 default_value, help_text, metadata, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                self.org_id, sobject_id, api_name, label, field_type, length,
+                is_custom, is_required, is_unique, reference_to, relationship_name,
+                formula, default_value, help_text, metadata_json,
+                datetime.now().isoformat()
+            ))
 
         return 1
 
@@ -401,7 +444,7 @@ class MetadataSync:
         for ref in field_refs:
             # Insert into detailed flow references table
             cursor.execute("""
-                INSERT INTO sf_flow_field_references
+                INSERT OR REPLACE INTO sf_flow_field_references
                 (flow_id, flow_api_name, flow_version, object_name, field_name,
                  element_name, element_type, is_input, is_output, variable_name,
                  extracted_at)
@@ -415,7 +458,7 @@ class MetadataSync:
             # Insert into central dependencies table
             reference_type = 'read' if ref.is_input else 'write' if ref.is_output else 'reference'
             cursor.execute("""
-                INSERT INTO sf_field_dependencies
+                INSERT OR REPLACE INTO sf_field_dependencies
                 (connection_alias, object_name, field_name, dependent_type, dependent_id,
                  dependent_name, reference_type, created_at, last_verified)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

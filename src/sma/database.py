@@ -33,9 +33,162 @@ class Database:
         self._initialize_schema()
         return self.conn
 
+    def _run_migrations(self, cursor):
+        """Run database migrations to fix schema issues.
+
+        Args:
+            cursor: Database cursor
+        """
+        # Migration 1: Remove duplicates from sobjects
+        self._remove_sobject_duplicates(cursor)
+
+        # Migration 2: Remove duplicates from fields
+        self._remove_field_duplicates(cursor)
+
+        # Migration 3: Remove duplicates from sf_flow_field_references
+        self._remove_flow_field_duplicates(cursor)
+
+        # Migration 4: Remove duplicates from sf_field_dependencies
+        self._remove_field_dependency_duplicates(cursor)
+
+    def _remove_sobject_duplicates(self, cursor):
+        """Remove duplicate entries from sobjects table.
+
+        Keeps the most recent entry based on id (auto-increment).
+        """
+        try:
+            # Check if table exists
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='sobjects'
+            """)
+            if not cursor.fetchone():
+                return  # Table doesn't exist yet
+
+            # Remove duplicates, keeping the one with the highest id (most recent)
+            cursor.execute("""
+                DELETE FROM sobjects
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM sobjects
+                    GROUP BY org_id, api_name
+                )
+            """)
+
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} duplicate sobjects")
+
+            self.conn.commit()
+        except Exception as e:
+            # Silently handle if the table structure is different
+            pass
+
+    def _remove_field_duplicates(self, cursor):
+        """Remove duplicate entries from fields table.
+
+        Keeps the most recent entry based on id (auto-increment).
+        """
+        try:
+            # Check if table exists
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='fields'
+            """)
+            if not cursor.fetchone():
+                return  # Table doesn't exist yet
+
+            # Remove duplicates, keeping the one with the highest id (most recent)
+            cursor.execute("""
+                DELETE FROM fields
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM fields
+                    GROUP BY org_id, sobject_id, api_name
+                )
+            """)
+
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} duplicate fields")
+
+            self.conn.commit()
+        except Exception as e:
+            # Silently handle if the table structure is different
+            pass
+
+    def _remove_flow_field_duplicates(self, cursor):
+        """Remove duplicate entries from sf_flow_field_references table.
+
+        Keeps the most recent entry based on id (auto-increment).
+        """
+        try:
+            # Check if table exists
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='sf_flow_field_references'
+            """)
+            if not cursor.fetchone():
+                return  # Table doesn't exist yet
+
+            # Remove duplicates, keeping the one with the highest id (most recent)
+            cursor.execute("""
+                DELETE FROM sf_flow_field_references
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM sf_flow_field_references
+                    GROUP BY flow_id, flow_version, object_name, field_name, element_name, element_type
+                )
+            """)
+
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} duplicate flow field references")
+
+            self.conn.commit()
+        except Exception as e:
+            # Silently handle if the table structure is different
+            pass
+
+    def _remove_field_dependency_duplicates(self, cursor):
+        """Remove duplicate entries from sf_field_dependencies table.
+
+        Keeps the most recent entry based on id (auto-increment).
+        """
+        try:
+            # Check if table exists
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='sf_field_dependencies'
+            """)
+            if not cursor.fetchone():
+                return  # Table doesn't exist yet
+
+            # Remove duplicates, keeping the one with the highest id (most recent)
+            cursor.execute("""
+                DELETE FROM sf_field_dependencies
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM sf_field_dependencies
+                    GROUP BY connection_alias, object_name, field_name, dependent_type, dependent_id, reference_type
+                )
+            """)
+
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} duplicate field dependencies")
+
+            self.conn.commit()
+        except Exception as e:
+            # Silently handle if the table structure is different
+            pass
+
     def _initialize_schema(self):
         """Initialize database schema if not exists."""
         cursor = self.conn.cursor()
+
+        # Run migrations to clean up duplicates before adding constraints
+        self._run_migrations(cursor)
 
         # Example table for tracking greetings
         cursor.execute("""
@@ -174,7 +327,8 @@ class Database:
                 reference_type TEXT,
                 line_number INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                last_verified DATETIME DEFAULT CURRENT_TIMESTAMP
+                last_verified DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(connection_alias, object_name, field_name, dependent_type, dependent_id, reference_type)
             )
         """)
 
@@ -208,7 +362,8 @@ class Database:
                 is_output BOOLEAN DEFAULT 0,
                 variable_name TEXT,
                 xpath_location TEXT,
-                extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(flow_id, flow_version, object_name, field_name, element_name, element_type)
             )
         """)
 
