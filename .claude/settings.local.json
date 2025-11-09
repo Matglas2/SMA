@@ -8,7 +8,11 @@
       "Bash(git push:*)",
       "Bash(gh pr create:*)",
       "Bash(git checkout:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd project documentation and configuration files\n\nAdded comprehensive documentation and project setup files that were\nmissing from the initial commits.\n\nChanges:\n- Added pyproject.toml for package configuration\n- Added requirements.txt for dependencies\n- Created CLAUDE.md with development guidelines and workflow\n- Updated README.md with full project description\n- Created documentation/ folder with:\n  - Setup guide\n  - Documentation standards\n  - Hello command feature documentation\n\nThese files establish the project structure and documentation standards\nfor future development.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git mv:*)"
     ],
     "deny": [],
     "ask": []

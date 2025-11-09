@@ -4,8 +4,9 @@ This folder contains comprehensive documentation for the SMA (Salesforce Metadat
 
 ## Core Documentation
 
-- **[REQUIREMENTS.md](REQUIREMENTS.md)** - Complete requirements tracking, feature roadmap, and evolution timeline
-- **[DATABASE_DESIGN.md](DATABASE_DESIGN.md)** - Database schema design, current and planned tables
+- **[requirements.md](requirements.md)** - Complete requirements tracking, feature roadmap, and evolution timeline
+- **[database-design.md](database-design.md)** - Database schema design, current and planned tables
+- **[implementation-plan.md](implementation-plan.md)** - Technical implementation roadmap for Salesforce integration
 - **[setup.md](setup.md)** - Installation and setup guide
 
 ## Documentation Standards
@@ -19,8 +20,16 @@ All features must be documented in this folder with the following information:
 
 ## Implemented Features
 
-1. [Hello Command](features/hello-command.md) - Greet users with inspirational quotes and ASCII art (Phase 0 demo)
+### Phase 0: Demo Features
+1. [Hello Command](features/hello-command.md) - Greet users with inspirational quotes and ASCII art
+
+### MVP Phase 1: Authentication & Tools
+2. [Salesforce Authentication](features/salesforce-authentication.md) - OAuth 2.0 connection to Salesforce orgs
+3. [Database Browser](features/database-browser.md) - Interactive web-based database explorer
+
+### MVP Phase 2: Metadata Retrieval
+4. [Metadata Synchronization](features/metadata-sync.md) - Download and cache Salesforce object and field metadata
 
 ## Planned Features (MVP)
 
-See [REQUIREMENTS.md](REQUIREMENTS.md) for the complete list of planned Salesforce integration features.
+See [requirements.md](requirements.md) for the complete list of planned Salesforce integration features.

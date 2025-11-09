@@ -12,7 +12,7 @@ Save time during Salesforce troubleshooting by providing quick answers to metada
 ### Current Status
 Phase 0: Basic CLI prototype with demo features (hello command, quote database). The Salesforce integration features are planned for the MVP phase.
 
-See [REQUIREMENTS.md](documentation/REQUIREMENTS.md) for complete feature roadmap and evolution timeline.
+See [requirements.md](documentation/requirements.md) for complete feature roadmap and evolution timeline.
 
 ## Project Structure
 
@@ -111,7 +111,7 @@ This workflow ensures:
 - `greetings` table: Tracks hello command usage with timestamps and usernames (demo feature)
 - `quotes` table: Stores inspirational quotes with text, author, and timestamp (demo feature)
 
-For planned Salesforce metadata schema, see [DATABASE_DESIGN.md](documentation/DATABASE_DESIGN.md)
+For planned Salesforce metadata schema, see [database-design.md](documentation/database-design.md)
 
 ## CLI Framework
 
