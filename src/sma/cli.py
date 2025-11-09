@@ -1151,5 +1151,85 @@ def db_path():
         console.print("[yellow]Database does not exist yet.[/yellow]\n")
 
 
+@database.command(name='reset')
+@click.confirmation_option(prompt='Are you sure you want to reset the database? This will clear all Salesforce metadata but keep greetings, quotes, and org connections.')
+def db_reset():
+    """Reset database metadata while preserving greetings, quotes, and org connections.
+
+    This will:
+    - Clear all Salesforce metadata tables (objects, fields, flows, triggers, etc.)
+    - Keep greetings table data
+    - Keep quotes table data
+    - Keep salesforce_orgs table data
+
+    Use this to start fresh with metadata sync without losing your org connections.
+
+    Example:
+        sma db reset
+    """
+    try:
+        with Database() as db:
+            cursor = db.conn.cursor()
+
+            # List of tables to clear (all Salesforce metadata except salesforce_orgs)
+            tables_to_clear = [
+                'sobjects',
+                'fields',
+                'sf_field_dependencies',
+                'sf_flow_field_references',
+                'sf_field_relationships',
+                'sf_object_relationships',
+                'sf_trigger_metadata',
+                'sf_flow_metadata',
+                'sf_automation_coverage'
+            ]
+
+            console.print("\n[bold cyan]Resetting database...[/bold cyan]\n")
+
+            cleared_counts = {}
+            for table in tables_to_clear:
+                # Check if table exists
+                cursor.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name=?
+                """, (table,))
+
+                if cursor.fetchone():
+                    # Count before clearing
+                    cursor.execute(f"SELECT COUNT(*) as count FROM {table}")
+                    count = cursor.fetchone()['count']
+                    cleared_counts[table] = count
+
+                    # Clear the table
+                    cursor.execute(f"DELETE FROM {table}")
+
+            db.conn.commit()
+
+            # Show what was cleared
+            if cleared_counts:
+                console.print("[bold green]✓ Database reset complete![/bold green]\n")
+                console.print("[bold]Cleared tables:[/bold]")
+                for table, count in cleared_counts.items():
+                    console.print(f"  {table}: [yellow]{count:,}[/yellow] records removed")
+                console.print()
+            else:
+                console.print("[yellow]No metadata found to clear.[/yellow]\n")
+
+            # Show what was preserved
+            console.print("[bold]Preserved tables:[/bold]")
+            preserved_tables = ['greetings', 'quotes', 'salesforce_orgs']
+            for table in preserved_tables:
+                cursor.execute(f"SELECT COUNT(*) as count FROM {table}")
+                count = cursor.fetchone()['count']
+                console.print(f"  {table}: [green]{count:,}[/green] records kept")
+            console.print()
+
+    except Exception as e:
+        console.print(f"\n[bold red]✗ Reset failed:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
 if __name__ == '__main__':
     main()
