@@ -412,9 +412,10 @@ class MetadataSync:
         synced_count = 0
 
         try:
-            # Query for active Flow versions directly using Tooling API
-            # This is more reliable than querying FlowDefinition which has varying field availability
-            query = "SELECT Id, Definition.DeveloperName, Definition.MasterLabel, VersionNumber, Status, Metadata FROM Flow WHERE Status = 'Active'"
+            # Query for active Flow versions using Tooling API
+            # Note: Cannot query Metadata field for multiple records (Salesforce limitation)
+            # Must retrieve Metadata for each flow individually
+            query = "SELECT Id, Definition.DeveloperName, Definition.MasterLabel, VersionNumber, Status FROM Flow WHERE Status = 'Active'"
             encoded_query = quote(query)
             result = self.sf.toolingexecute(f"query/?q={encoded_query}")
             active_flows = result.get('records', [])
@@ -422,9 +423,17 @@ class MetadataSync:
             console.print(f"[dim]Found {len(active_flows)} active flows to process[/dim]")
 
             for flow in active_flows:
-                # Parse the flow and extract dependencies
-                self._process_flow(flow)
-                synced_count += 1
+                # Fetch the full flow metadata (including XML)
+                flow_with_metadata = self._get_flow_metadata(flow['Id'])
+                if flow_with_metadata:
+                    # Merge the basic info with the full metadata
+                    flow_with_metadata['Definition'] = flow.get('Definition', {})
+                    flow_with_metadata['VersionNumber'] = flow.get('VersionNumber', 1)
+                    flow_with_metadata['Status'] = flow.get('Status', 'Active')
+
+                    # Parse the flow and extract dependencies
+                    self._process_flow(flow_with_metadata)
+                    synced_count += 1
 
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Error syncing flows: {e}")
@@ -433,6 +442,27 @@ class MetadataSync:
 
         self.conn.commit()
         return synced_count
+
+    def _get_flow_metadata(self, flow_id: str) -> Optional[Dict]:
+        """Get Flow metadata including XML for a single flow.
+
+        Args:
+            flow_id: Flow record ID
+
+        Returns:
+            Flow record with Metadata XML, or None if retrieval fails
+        """
+        try:
+            # Query single flow by ID to get Metadata field
+            # Salesforce only allows Metadata field retrieval for single records
+            query = f"SELECT Id, Metadata FROM Flow WHERE Id = '{flow_id}'"
+            encoded_query = quote(query)
+            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
+            records = result.get('records', [])
+            return records[0] if records else None
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Error getting metadata for flow {flow_id}: {e}")
+            return None
 
     def _process_flow(self, flow: Dict):
         """Process a flow and extract dependencies.
