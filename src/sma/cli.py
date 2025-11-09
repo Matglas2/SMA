@@ -12,6 +12,7 @@ from rich.table import Table
 from rapidfuzz import fuzz, process
 from .database import Database
 from .salesforce.connection import SalesforceConnection
+from .interactive_session import start_interactive_session
 
 console = Console()
 
@@ -140,6 +141,69 @@ def hello(name):
         click.echo(click.style(f"  This is greeting #{total_greetings}! ", fg='magenta'))
 
     click.echo("=" * 60)
+
+
+@main.command()
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+def ss(alias):
+    """Start interactive Simple Salesforce session.
+
+    Opens an interactive Python session with an authenticated Salesforce client.
+    You can use the 'sf' object to interact with Salesforce using simple_salesforce.
+
+    The session provides helper functions:
+    - query(soql) - Execute SOQL queries
+    - describe(object) - Describe Salesforce objects
+    - get_record(object, id) - Get records by ID
+    - search(sosl) - Execute SOSL searches
+
+    You can also access the Salesforce client directly via the 'sf' variable.
+
+    Example:
+        sma ss                          # Use active org
+        sma ss --alias production       # Use specific org
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            # Check if connected
+            if alias is None:
+                status = conn_manager.get_status()
+                if status is None:
+                    console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                    console.print("Run [cyan]sma sf connect[/cyan] first.\n")
+                    return
+                alias = status['org_name']
+            else:
+                # Verify org exists
+                cursor = db.conn.cursor()
+                cursor.execute("SELECT org_name FROM salesforce_orgs WHERE org_name = ?", (alias,))
+                result = cursor.fetchone()
+                if not result:
+                    console.print(f"\n[bold red]✗ Org not found:[/bold red] {alias}\n")
+                    console.print("Run [cyan]sma sf list[/cyan] to see connected orgs.\n")
+                    return
+
+            # Get Salesforce client
+            try:
+                sf_client = conn_manager.get_client(alias)
+            except Exception as e:
+                console.print(f"\n[bold red]✗ Failed to connect:[/bold red] {str(e)}\n")
+                console.print("Your session may have expired. Try reconnecting:\n")
+                console.print(f"  [cyan]sma sf connect --alias {alias} --client-id YOUR_ID --client-secret YOUR_SECRET[/cyan]\n")
+                return
+
+            # Start interactive session
+            start_interactive_session(sf_client, alias)
+
+    except KeyboardInterrupt:
+        console.print("\n\n[green]Session ended.[/green]\n")
+    except Exception as e:
+        console.print(f"\n[bold red]✗ Error:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
 
 
 # Salesforce commands group
