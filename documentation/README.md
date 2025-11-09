@@ -33,6 +33,7 @@ All features must be documented in this folder with the following information:
 
 ### MVP Phase 3: Dependency Tracking & Analysis
 6. [Analyse Commands](features/analyse-commands.md) - Query field dependencies, Flow usage, and object relationships
+7. [Fuzzy Search](features/fuzzy-search.md) - Intelligent field search with fuzzy matching
 
 ## Planned Features (MVP)
 

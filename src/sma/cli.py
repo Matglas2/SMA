@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
+from rapidfuzz import fuzz, process
 from .database import Database
 from .salesforce.connection import SalesforceConnection
 
@@ -390,6 +391,183 @@ def sf_sync(objects_only):
 
     except Exception as e:
         console.print(f"\n[bold red]✗ Sync failed:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
+@salesforce.command(name='search')
+@click.argument('query')
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.option('--limit', default=20, help='Maximum number of results to display (default: 20)')
+@click.option('--threshold', default=60, help='Minimum match score threshold (0-100, default: 60)')
+@click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
+@click.option('--search-in', type=click.Choice(['all', 'name', 'label'], case_sensitive=False), default='all', help='Where to search (field name, label, or both)')
+def sf_search(query, alias, limit, threshold, format, search_in):
+    """Fuzzy search for fields by name or label.
+
+    Searches across all fields in the connected Salesforce org and returns
+    matches ranked by similarity score. Useful for quickly finding fields
+    when you're not sure of the exact name.
+
+    Examples:
+        sma sf search email                    # Find all email-related fields
+        sma sf search "created date"           # Find date fields
+        sma sf search phone --limit 10         # Show top 10 matches only
+        sma sf search addr --threshold 70      # Only show matches above 70% similarity
+        sma sf search name --search-in label   # Search only in field labels
+        sma sf search acc --format json        # Output as JSON
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            # Determine which org to query
+            if alias is None:
+                status = conn_manager.get_status()
+                if status is None:
+                    console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                    console.print("Run [cyan]sma sf connect[/cyan] first or specify --alias.\n")
+                    return
+                alias = status['org_name']
+                org_id = status['org_id']
+            else:
+                # Get org_id from alias
+                cursor = db.conn.cursor()
+                cursor.execute("SELECT org_id FROM salesforce_orgs WHERE org_name = ?", (alias,))
+                result = cursor.fetchone()
+                if not result:
+                    console.print(f"\n[bold red]✗ Org not found:[/bold red] {alias}\n")
+                    return
+                org_id = result['org_id']
+
+            # Fetch all fields from database
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT
+                    f.api_name,
+                    f.label,
+                    f.type,
+                    s.api_name as object_name,
+                    s.label as object_label,
+                    f.is_custom,
+                    f.help_text
+                FROM fields f
+                JOIN sobjects s ON f.sobject_salesforce_id = s.salesforce_id
+                WHERE f.org_id = ?
+                ORDER BY s.api_name, f.api_name
+            """, (org_id,))
+
+            all_fields = cursor.fetchall()
+
+            if not all_fields:
+                console.print(f"\n[yellow]No fields found in database.[/yellow]")
+                console.print("Run [cyan]sma sf sync[/cyan] first to populate the database.\n")
+                return
+
+            # Prepare fields for fuzzy matching
+            field_choices = []
+            for field in all_fields:
+                search_text = []
+
+                if search_in in ['all', 'name']:
+                    search_text.append(field['api_name'])
+
+                if search_in in ['all', 'label'] and field['label']:
+                    search_text.append(field['label'])
+
+                # Combine search texts
+                combined_text = ' '.join(search_text)
+
+                field_choices.append({
+                    'search_text': combined_text,
+                    'field': field
+                })
+
+            # Perform fuzzy search
+            matches = []
+            for choice in field_choices:
+                # Calculate match score
+                score = fuzz.partial_ratio(query.lower(), choice['search_text'].lower())
+
+                if score >= threshold:
+                    matches.append({
+                        'field': choice['field'],
+                        'score': score
+                    })
+
+            # Sort by score (descending) and limit results
+            matches.sort(key=lambda x: x['score'], reverse=True)
+            matches = matches[:limit]
+
+            if not matches:
+                console.print(f"\n[yellow]No fields found matching '{query}' with threshold {threshold}%[/yellow]")
+                console.print(f"Try lowering the threshold with [cyan]--threshold 50[/cyan]\n")
+                return
+
+            if format == 'json':
+                import json
+                output = []
+                for match in matches:
+                    field = match['field']
+                    output.append({
+                        'object_name': field['object_name'],
+                        'object_label': field['object_label'],
+                        'field_name': field['api_name'],
+                        'field_label': field['label'],
+                        'type': field['type'],
+                        'is_custom': bool(field['is_custom']),
+                        'help_text': field['help_text'],
+                        'match_score': match['score']
+                    })
+                console.print(json.dumps(output, indent=2))
+            else:
+                # Table format
+                table = Table(
+                    title=f"Fields Matching '{query}' (Top {len(matches)} Results)",
+                    show_header=True,
+                    header_style="bold cyan"
+                )
+                table.add_column("Score", justify="right", style="green", width=6)
+                table.add_column("Object", style="cyan")
+                table.add_column("Field Name", style="yellow")
+                table.add_column("Label", style="white")
+                table.add_column("Type", style="magenta")
+                table.add_column("Custom", justify="center", width=6)
+
+                for match in matches:
+                    field = match['field']
+                    score = match['score']
+
+                    # Color code score
+                    if score >= 90:
+                        score_str = f"[bold green]{score}%[/bold green]"
+                    elif score >= 75:
+                        score_str = f"[green]{score}%[/green]"
+                    elif score >= 60:
+                        score_str = f"[yellow]{score}%[/yellow]"
+                    else:
+                        score_str = f"[dim]{score}%[/dim]"
+
+                    custom_icon = "✓" if field['is_custom'] else ""
+
+                    table.add_row(
+                        score_str,
+                        field['object_name'],
+                        field['api_name'],
+                        field['label'] or "-",
+                        field['type'] or "-",
+                        custom_icon
+                    )
+
+                console.print()
+                console.print(table)
+                console.print(f"\n[bold]Total matches:[/bold] [cyan]{len(matches)}[/cyan] of [dim]{len(all_fields)}[/dim] total fields")
+                console.print(f"[bold]Search query:[/bold] [cyan]{query}[/cyan]")
+                console.print(f"[bold]Threshold:[/bold] [cyan]{threshold}%[/cyan]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]✗ Search failed:[/bold red] {str(e)}\n")
         import traceback
         traceback.print_exc()
         raise click.Abort()
