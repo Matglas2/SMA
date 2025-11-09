@@ -39,11 +39,83 @@ class Database:
         Args:
             cursor: Database cursor
         """
-        # Migration 1: Remove duplicates from sf_flow_field_references
+        # Migration 1: Remove duplicates from sobjects
+        self._remove_sobject_duplicates(cursor)
+
+        # Migration 2: Remove duplicates from fields
+        self._remove_field_duplicates(cursor)
+
+        # Migration 3: Remove duplicates from sf_flow_field_references
         self._remove_flow_field_duplicates(cursor)
 
-        # Migration 2: Remove duplicates from sf_field_dependencies
+        # Migration 4: Remove duplicates from sf_field_dependencies
         self._remove_field_dependency_duplicates(cursor)
+
+    def _remove_sobject_duplicates(self, cursor):
+        """Remove duplicate entries from sobjects table.
+
+        Keeps the most recent entry based on id (auto-increment).
+        """
+        try:
+            # Check if table exists
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='sobjects'
+            """)
+            if not cursor.fetchone():
+                return  # Table doesn't exist yet
+
+            # Remove duplicates, keeping the one with the highest id (most recent)
+            cursor.execute("""
+                DELETE FROM sobjects
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM sobjects
+                    GROUP BY org_id, api_name
+                )
+            """)
+
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} duplicate sobjects")
+
+            self.conn.commit()
+        except Exception as e:
+            # Silently handle if the table structure is different
+            pass
+
+    def _remove_field_duplicates(self, cursor):
+        """Remove duplicate entries from fields table.
+
+        Keeps the most recent entry based on id (auto-increment).
+        """
+        try:
+            # Check if table exists
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='fields'
+            """)
+            if not cursor.fetchone():
+                return  # Table doesn't exist yet
+
+            # Remove duplicates, keeping the one with the highest id (most recent)
+            cursor.execute("""
+                DELETE FROM fields
+                WHERE id NOT IN (
+                    SELECT MAX(id)
+                    FROM fields
+                    GROUP BY org_id, sobject_id, api_name
+                )
+            """)
+
+            deleted_count = cursor.rowcount
+            if deleted_count > 0:
+                print(f"Cleaned up {deleted_count} duplicate fields")
+
+            self.conn.commit()
+        except Exception as e:
+            # Silently handle if the table structure is different
+            pass
 
     def _remove_flow_field_duplicates(self, cursor):
         """Remove duplicate entries from sf_flow_field_references table.
