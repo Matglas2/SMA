@@ -19,5 +19,8 @@ requests>=2.31.0
 # Parsing
 lxml>=4.9.0
 
+# Fuzzy Search
+rapidfuzz>=3.0.0
+
 # Database Browser
 datasette>=0.65.0
