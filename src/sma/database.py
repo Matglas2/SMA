@@ -80,6 +80,85 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_is_active ON salesforce_orgs(is_active)
         """)
 
+        # Table for Salesforce objects (sobjects)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sobjects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                org_id TEXT NOT NULL,
+                api_name TEXT NOT NULL,
+                label TEXT,
+                plural_label TEXT,
+                is_custom BOOLEAN,
+                key_prefix TEXT,
+                is_queryable BOOLEAN,
+                is_createable BOOLEAN,
+                is_updateable BOOLEAN,
+                is_deletable BOOLEAN,
+                metadata TEXT,
+                synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(org_id, api_name)
+            )
+        """)
+
+        # Create indexes for sobjects
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sobject_org_api ON sobjects(org_id, api_name)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sobject_custom ON sobjects(is_custom)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sobject_label ON sobjects(label)
+        """)
+
+        # Table for Salesforce fields
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS fields (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                org_id TEXT NOT NULL,
+                sobject_id INTEGER NOT NULL,
+                api_name TEXT NOT NULL,
+                label TEXT,
+                type TEXT,
+                length INTEGER,
+                is_custom BOOLEAN,
+                is_required BOOLEAN,
+                is_unique BOOLEAN,
+                reference_to TEXT,
+                relationship_name TEXT,
+                formula TEXT,
+                default_value TEXT,
+                help_text TEXT,
+                metadata TEXT,
+                synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sobject_id) REFERENCES sobjects(id) ON DELETE CASCADE,
+                UNIQUE(org_id, sobject_id, api_name)
+            )
+        """)
+
+        # Create indexes for fields
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_org_sobject ON fields(org_id, sobject_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_api_name ON fields(api_name)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_label ON fields(label)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_type ON fields(type)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_reference ON fields(reference_to)
+        """)
+
         self.conn.commit()
         self._seed_quotes(cursor)
 

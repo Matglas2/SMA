@@ -78,7 +78,7 @@ The following tables are planned for Salesforce metadata storage.
 ### Core Metadata Tables
 
 #### Table: `salesforce_orgs`
-**Status:** 📋 Planned
+**Status:** ✅ Implemented (Phase 1)
 **Purpose:** Store connected Salesforce organizations
 
 ```sql
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS salesforce_orgs (
 ---
 
 #### Table: `sobjects`
-**Status:** 📋 Planned
+**Status:** ✅ Implemented (Phase 2)
 **Purpose:** Store Salesforce object metadata
 
 ```sql
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS sobjects (
 ---
 
 #### Table: `fields`
-**Status:** 📋 Planned
+**Status:** ✅ Implemented (Phase 2)
 **Purpose:** Store Salesforce field metadata
 
 ```sql

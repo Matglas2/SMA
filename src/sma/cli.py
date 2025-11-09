@@ -321,6 +321,65 @@ def sf_disconnect(alias):
         raise click.Abort()
 
 
+@salesforce.command(name='sync')
+@click.option('--objects-only', is_flag=True, help='Sync only objects (skip fields)')
+def sf_sync(objects_only):
+    """Sync Salesforce metadata to local database.
+
+    Downloads object and field metadata from Salesforce and stores
+    it locally for fast querying. Run this after connecting to populate
+    the database with metadata.
+
+    Example:
+        sma sf sync                    # Sync all metadata
+        sma sf sync --objects-only     # Sync only objects
+    """
+    try:
+        with Database() as db:
+            from .salesforce.metadata import MetadataSync
+
+            conn_manager = SalesforceConnection(db)
+
+            # Check if connected
+            status = conn_manager.get_status()
+            if status is None:
+                console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                console.print("Run [cyan]sma sf connect[/cyan] first.\n")
+                return
+
+            # Get Salesforce client
+            sf_client = conn_manager.get_client()
+            if sf_client is None:
+                console.print("\n[bold red]✗ Could not connect to Salesforce.[/bold red]")
+                console.print("Your session may have expired. Try reconnecting:\n")
+                console.print(f"  [cyan]sma sf connect --alias {status['org_name']} --client-id YOUR_ID --client-secret YOUR_SECRET[/cyan]\n")
+                return
+
+            # Create metadata sync instance
+            metadata_sync = MetadataSync(sf_client, db.conn, status['org_id'])
+
+            if objects_only:
+                console.print("\n[bold cyan]Syncing objects only...[/bold cyan]\n")
+                count = metadata_sync.sync_sobjects()
+                console.print(f"\n[bold green]✓ Synced {count} objects![/bold green]\n")
+            else:
+                # Sync all metadata
+                result = metadata_sync.sync_all()
+
+                # Show summary
+                console.print("\n[bold cyan]Sync Summary[/bold cyan]\n")
+                console.print(f"Objects synced: [green]{result['objects']}[/green]")
+                console.print(f"Fields synced:  [green]{result['fields']}[/green]")
+                console.print(f"\nYou can now query metadata using future commands or browse the database:\n")
+                console.print(f"  [cyan]sma db browse[/cyan]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]✗ Sync failed:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
 # Database commands group
 @main.group(name='db')
 def database():

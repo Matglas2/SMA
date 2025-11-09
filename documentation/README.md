@@ -27,6 +27,9 @@ All features must be documented in this folder with the following information:
 2. [Salesforce Authentication](features/salesforce-authentication.md) - OAuth 2.0 connection to Salesforce orgs
 3. [Database Browser](features/database-browser.md) - Interactive web-based database explorer
 
+### MVP Phase 2: Metadata Retrieval
+4. [Metadata Synchronization](features/metadata-sync.md) - Download and cache Salesforce object and field metadata
+
 ## Planned Features (MVP)
 
 See [requirements.md](requirements.md) for the complete list of planned Salesforce integration features.
