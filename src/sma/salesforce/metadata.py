@@ -401,7 +401,7 @@ class MetadataSync:
         for ref in field_refs:
             # Insert into detailed flow references table
             cursor.execute("""
-                INSERT INTO sf_flow_field_references
+                INSERT OR REPLACE INTO sf_flow_field_references
                 (flow_id, flow_api_name, flow_version, object_name, field_name,
                  element_name, element_type, is_input, is_output, variable_name,
                  extracted_at)
@@ -415,7 +415,7 @@ class MetadataSync:
             # Insert into central dependencies table
             reference_type = 'read' if ref.is_input else 'write' if ref.is_output else 'reference'
             cursor.execute("""
-                INSERT INTO sf_field_dependencies
+                INSERT OR REPLACE INTO sf_field_dependencies
                 (connection_alias, object_name, field_name, dependent_type, dependent_id,
                  dependent_name, reference_type, created_at, last_verified)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
