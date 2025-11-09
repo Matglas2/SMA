@@ -1,6 +1,7 @@
 """Salesforce metadata synchronization module."""
 
 import json
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Dict, List, Optional
 from simple_salesforce import Salesforce
@@ -420,7 +421,12 @@ class MetadataSync:
             result = self.sf.toolingexecute(f"query/?q={query}")
             flow_definitions = result.get('records', [])
 
-            for flow_def in flow_definitions:
+            console.print(f"[cyan]Found {len(flow_definitions)} active flows to process[/cyan]")
+
+            for i, flow_def in enumerate(flow_definitions):
+                flow_name = flow_def.get('DeveloperName', 'Unknown')
+                console.print(f"[dim]Processing flow {i+1}/{len(flow_definitions)}: {flow_name}[/dim]")
+
                 # Get the active version's metadata
                 if flow_def.get('ActiveVersionId'):
                     flow_version = self._get_flow_version(flow_def['ActiveVersionId'])
@@ -428,9 +434,17 @@ class MetadataSync:
                         # Parse the flow and extract dependencies
                         self._process_flow_version(flow_def, flow_version)
                         synced_count += 1
+                    else:
+                        console.print(f"[yellow]⚠[/yellow] Could not retrieve version for flow {flow_name}")
+                else:
+                    console.print(f"[yellow]⚠[/yellow] No active version for flow {flow_name}")
+
+            console.print(f"[green]Successfully processed {synced_count} out of {len(flow_definitions)} flows[/green]")
 
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Error syncing flows: {e}")
+            import traceback
+            traceback.print_exc()
 
         self.conn.commit()
         return synced_count
@@ -445,14 +459,31 @@ class MetadataSync:
             Flow version record with metadata
         """
         try:
+            # First, try to get the Flow using a direct GET request
+            # This is more reliable for getting the complete Metadata field
+            flow_url = f"/services/data/v58.0/tooling/sobjects/Flow/{version_id}"
+            result = self.sf.tooling.restful(flow_url, method='GET')
+
+            if result and 'Metadata' in result:
+                return result
+
+            # Fallback to query if direct GET doesn't work
             query = f"""
                 SELECT Id, Definition.DeveloperName, VersionNumber, Status, Metadata
                 FROM Flow
                 WHERE Id = '{version_id}'
             """
-            result = self.sf.toolingexecute(f"query/?q={query}")
-            records = result.get('records', [])
-            return records[0] if records else None
+            query_result = self.sf.toolingexecute(f"query/?q={query}")
+            records = query_result.get('records', [])
+
+            if records and records[0]:
+                record = records[0]
+                # Check if Metadata field is populated
+                if not record.get('Metadata'):
+                    console.print(f"[yellow]⚠[/yellow] Flow {version_id} Metadata field is empty")
+                return record
+
+            return None
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Error getting flow version {version_id}: {e}")
             return None
@@ -473,10 +504,23 @@ class MetadataSync:
         # Parse Flow XML if available
         metadata_xml = flow_version.get('Metadata')
         if not metadata_xml:
+            console.print(f"[yellow]⚠[/yellow] No metadata XML found for flow {flow_api_name}")
             return
 
-        # Parse the Flow XML
-        parsed = self.flow_parser.parse_flow_xml(metadata_xml)
+        # Handle different metadata formats
+        if isinstance(metadata_xml, dict):
+            # Salesforce returns metadata as JSON dict in newer API versions
+            # Parse JSON metadata instead of XML
+            parsed = self._parse_flow_json_metadata(metadata_xml)
+            if not parsed or 'error' in parsed:
+                console.print(f"[yellow]⚠[/yellow] Could not parse JSON metadata for {flow_api_name}")
+                return
+        elif isinstance(metadata_xml, str):
+            # Parse the Flow XML (older API versions)
+            parsed = self.flow_parser.parse_flow_xml(metadata_xml)
+        else:
+            console.print(f"[yellow]⚠[/yellow] Unknown metadata format for {flow_api_name}")
+            return
 
         if 'error' in parsed:
             console.print(f"[yellow]⚠[/yellow] Error parsing flow {flow_api_name}: {parsed['error']}")
@@ -533,6 +577,260 @@ class MetadataSync:
                 flow_id, flow_api_name, reference_type,
                 datetime.now().isoformat(), datetime.now().isoformat()
             ))
+
+    def _parse_flow_json_metadata(self, metadata: Dict) -> Dict:
+        """Parse Flow metadata in JSON format (API v44.0+).
+
+        Args:
+            metadata: Flow metadata as JSON dict
+
+        Returns:
+            Dictionary containing parsed metadata, field references, and element counts
+        """
+        from ..parsers.flow_parser import FieldReference
+
+        try:
+            # Extract high-level metadata
+            flow_metadata = {
+                'process_type': metadata.get('processType'),
+                'trigger_type': metadata.get('triggerType'),
+                'trigger_object': metadata.get('object'),
+                'status': metadata.get('status'),
+                'is_active': (metadata.get('status') == 'Active'),
+                'description': metadata.get('description')
+            }
+
+            # Extract field references from various Flow elements
+            field_refs = []
+            element_counts = {
+                'total_elements': 0,
+                'record_lookups': 0,
+                'record_creates': 0,
+                'record_updates': 0,
+                'record_deletes': 0,
+                'decisions': 0,
+                'assignments': 0,
+                'loops': 0,
+                'screens': 0,
+                'subflows': 0
+            }
+
+            # Parse recordLookups
+            for lookup in metadata.get('recordLookups', []):
+                element_counts['record_lookups'] += 1
+                element_counts['total_elements'] += 1
+                refs = self._extract_field_refs_from_record_element(lookup, 'recordLookup')
+                field_refs.extend(refs)
+
+            # Parse recordCreates
+            for create in metadata.get('recordCreates', []):
+                element_counts['record_creates'] += 1
+                element_counts['total_elements'] += 1
+                refs = self._extract_field_refs_from_record_element(create, 'recordCreate')
+                field_refs.extend(refs)
+
+            # Parse recordUpdates
+            for update in metadata.get('recordUpdates', []):
+                element_counts['record_updates'] += 1
+                element_counts['total_elements'] += 1
+                refs = self._extract_field_refs_from_record_element(update, 'recordUpdate')
+                field_refs.extend(refs)
+
+            # Parse recordDeletes
+            for delete in metadata.get('recordDeletes', []):
+                element_counts['record_deletes'] += 1
+                element_counts['total_elements'] += 1
+                refs = self._extract_field_refs_from_record_element(delete, 'recordDelete')
+                field_refs.extend(refs)
+
+            # Parse decisions
+            for decision in metadata.get('decisions', []):
+                element_counts['decisions'] += 1
+                element_counts['total_elements'] += 1
+                refs = self._extract_field_refs_from_decision(decision)
+                field_refs.extend(refs)
+
+            # Parse assignments
+            for assignment in metadata.get('assignments', []):
+                element_counts['assignments'] += 1
+                element_counts['total_elements'] += 1
+                refs = self._extract_field_refs_from_assignment(assignment)
+                field_refs.extend(refs)
+
+            # Count other elements
+            element_counts['loops'] = len(metadata.get('loops', []))
+            element_counts['screens'] = len(metadata.get('screens', []))
+            element_counts['subflows'] = len(metadata.get('subflows', []))
+            element_counts['total_elements'] += element_counts['loops'] + element_counts['screens'] + element_counts['subflows']
+
+            return {
+                'metadata': flow_metadata,
+                'field_references': field_refs,
+                'element_counts': element_counts
+            }
+
+        except Exception as e:
+            return {
+                'error': f'JSON parsing error: {str(e)}',
+                'metadata': {},
+                'field_references': [],
+                'element_counts': {}
+            }
+
+    def _extract_field_refs_from_record_element(self, element: Dict, element_type: str) -> List:
+        """Extract field references from a record operation element (JSON format).
+
+        Args:
+            element: Record operation element (lookup, create, update, delete)
+            element_type: Type of operation
+
+        Returns:
+            List of FieldReference objects
+        """
+        from ..parsers.flow_parser import FieldReference
+        refs = []
+
+        element_name = element.get('name', 'Unknown')
+        object_name = element.get('object')
+
+        if not object_name:
+            return refs
+
+        # Extract from filters
+        for filter_elem in element.get('filters', []):
+            field_name = filter_elem.get('field')
+            if field_name:
+                refs.append(FieldReference(
+                    object_name=object_name,
+                    field_name=field_name,
+                    element_name=element_name,
+                    element_type=element_type,
+                    is_input=True,
+                    is_output=False
+                ))
+
+        # Extract from inputAssignments
+        for input_assign in element.get('inputAssignments', []):
+            field_name = input_assign.get('field')
+            if field_name:
+                refs.append(FieldReference(
+                    object_name=object_name,
+                    field_name=field_name,
+                    element_name=element_name,
+                    element_type=element_type,
+                    is_input=False,
+                    is_output=True
+                ))
+
+        # Extract from outputAssignments
+        for output_assign in element.get('outputAssignments', []):
+            field_name = output_assign.get('field')
+            if field_name:
+                refs.append(FieldReference(
+                    object_name=object_name,
+                    field_name=field_name,
+                    element_name=element_name,
+                    element_type=element_type,
+                    is_input=True,
+                    is_output=False,
+                    variable_name=output_assign.get('assignToReference')
+                ))
+
+        return refs
+
+    def _extract_field_refs_from_decision(self, element: Dict) -> List:
+        """Extract field references from a decision element (JSON format).
+
+        Args:
+            element: Decision element
+
+        Returns:
+            List of FieldReference objects
+        """
+        from ..parsers.flow_parser import FieldReference
+        refs = []
+
+        element_name = element.get('name', 'Unknown')
+
+        # Parse rules and conditions
+        for rule in element.get('rules', []):
+            for condition in rule.get('conditions', []):
+                left_value = condition.get('leftValueReference', '')
+                if '.' in left_value:
+                    parts = left_value.split('.', 1)
+                    if len(parts) == 2:
+                        refs.append(FieldReference(
+                            object_name=parts[0],
+                            field_name=parts[1],
+                            element_name=element_name,
+                            element_type='decision',
+                            is_input=True,
+                            is_output=False
+                        ))
+
+                right_value = condition.get('rightValue', {})
+                if isinstance(right_value, dict):
+                    right_ref = right_value.get('elementReference', '')
+                    if '.' in right_ref:
+                        parts = right_ref.split('.', 1)
+                        if len(parts) == 2:
+                            refs.append(FieldReference(
+                                object_name=parts[0],
+                                field_name=parts[1],
+                                element_name=element_name,
+                                element_type='decision',
+                                is_input=True,
+                                is_output=False
+                            ))
+
+        return refs
+
+    def _extract_field_refs_from_assignment(self, element: Dict) -> List:
+        """Extract field references from an assignment element (JSON format).
+
+        Args:
+            element: Assignment element
+
+        Returns:
+            List of FieldReference objects
+        """
+        from ..parsers.flow_parser import FieldReference
+        refs = []
+
+        element_name = element.get('name', 'Unknown')
+
+        for assign_item in element.get('assignmentItems', []):
+            # Check assignToReference for object.field pattern
+            assign_ref = assign_item.get('assignToReference', '')
+            if '.' in assign_ref:
+                parts = assign_ref.split('.', 1)
+                if len(parts) == 2:
+                    refs.append(FieldReference(
+                        object_name=parts[0],
+                        field_name=parts[1],
+                        element_name=element_name,
+                        element_type='assignment',
+                        is_input=False,
+                        is_output=True
+                    ))
+
+            # Check value references
+            value = assign_item.get('value', {})
+            if isinstance(value, dict):
+                elem_ref = value.get('elementReference', '')
+                if '.' in elem_ref:
+                    parts = elem_ref.split('.', 1)
+                    if len(parts) == 2:
+                        refs.append(FieldReference(
+                            object_name=parts[0],
+                            field_name=parts[1],
+                            element_name=element_name,
+                            element_type='assignment',
+                            is_input=True,
+                            is_output=False
+                        ))
+
+        return refs
 
     def sync_trigger_metadata(self) -> int:
         """Sync Apex trigger inventory metadata.
