@@ -35,6 +35,7 @@ SMA/
 │   ├── __init__.py             # Package initialization
 │   ├── cli.py                  # CLI commands using Click framework
 │   ├── database.py             # SQLite database management
+│   ├── interactive_session.py  # Interactive Simple Salesforce REPL
 │   ├── parsers/                # Metadata parsers
 │   │   ├── __init__.py         # Package initialization
 │   │   └── flow_parser.py      # Flow XML parser for field extraction
@@ -52,6 +53,7 @@ SMA/
 │   └── features/               # Individual feature documentation
 │       ├── hello-command.md
 │       ├── salesforce-authentication.md
+│       ├── interactive-session.md
 │       ├── metadata-sync.md
 │       ├── database-browser.md
 │       └── analyse-commands.md
@@ -89,6 +91,10 @@ sma hello --name "YourName"
 sma sf connect --alias myorg --client-id <CLIENT_ID> --client-secret <CLIENT_SECRET>
 sma sf list
 sma sf sync
+
+# Interactive Salesforce session
+sma ss                      # Start interactive Python session with Salesforce client
+sma ss --alias myorg        # Use specific org
 
 # Analysis commands (Phase 3)
 sma sf analyse field-flows Account Email
@@ -242,6 +248,7 @@ Each feature document should include:
 - `sma sf connect` - Authenticate with Salesforce org using OAuth 2.0 with PKCE
 - `sma sf disconnect` - Remove stored credentials for an org
 - `sma sf list` - List all connected Salesforce orgs
+- `sma ss` - Start interactive Simple Salesforce session with authenticated client
 
 **Features:**
 - OAuth 2.0 authentication flow with PKCE (RFC 7636)
@@ -249,8 +256,9 @@ Each feature document should include:
 - Multi-org support with connection aliases
 - Token refresh functionality
 - Support for both production and sandbox environments
+- Interactive Python REPL with pre-configured Salesforce client and helper functions
 
-See: [salesforce-authentication.md](documentation/features/salesforce-authentication.md)
+See: [salesforce-authentication.md](documentation/features/salesforce-authentication.md) and [interactive-session.md](documentation/features/interactive-session.md)
 
 ### Phase 2: Metadata Synchronization (✅ Implemented)
 
