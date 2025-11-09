@@ -412,63 +412,54 @@ class MetadataSync:
         synced_count = 0
 
         try:
-            # Query for Flow definitions using Tooling API
-            # Note: ProcessType field is not available on FlowDefinition in all orgs/API versions
-            query = "SELECT Id, DeveloperName, MasterLabel, ActiveVersionId, LatestVersionId, Description FROM FlowDefinition WHERE IsActive = true"
+            # Query for active Flow versions directly using Tooling API
+            # This is more reliable than querying FlowDefinition which has varying field availability
+            query = "SELECT Id, Definition.DeveloperName, Definition.MasterLabel, VersionNumber, Status, Metadata FROM Flow WHERE Status = 'Active'"
             encoded_query = quote(query)
             result = self.sf.toolingexecute(f"query/?q={encoded_query}")
-            flow_definitions = result.get('records', [])
+            active_flows = result.get('records', [])
 
-            for flow_def in flow_definitions:
-                # Get the active version's metadata
-                if flow_def.get('ActiveVersionId'):
-                    flow_version = self._get_flow_version(flow_def['ActiveVersionId'])
-                    if flow_version:
-                        # Parse the flow and extract dependencies
-                        self._process_flow_version(flow_def, flow_version)
-                        synced_count += 1
+            console.print(f"[dim]Found {len(active_flows)} active flows to process[/dim]")
+
+            for flow in active_flows:
+                # Parse the flow and extract dependencies
+                self._process_flow(flow)
+                synced_count += 1
 
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Error syncing flows: {e}")
+            import traceback
+            traceback.print_exc()
 
         self.conn.commit()
         return synced_count
 
-    def _get_flow_version(self, version_id: str) -> Optional[Dict]:
-        """Get Flow version details including XML metadata.
+    def _process_flow(self, flow: Dict):
+        """Process a flow and extract dependencies.
 
         Args:
-            version_id: Flow version ID
-
-        Returns:
-            Flow version record with metadata
-        """
-        try:
-            query = f"SELECT Id, Definition.DeveloperName, VersionNumber, Status, Metadata FROM Flow WHERE Id = '{version_id}'"
-            encoded_query = quote(query)
-            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
-            records = result.get('records', [])
-            return records[0] if records else None
-        except Exception as e:
-            console.print(f"[yellow]⚠[/yellow] Error getting flow version {version_id}: {e}")
-            return None
-
-    def _process_flow_version(self, flow_def: Dict, flow_version: Dict):
-        """Process a flow version and extract dependencies.
-
-        Args:
-            flow_def: Flow definition record
-            flow_version: Flow version record with XML
+            flow: Flow record from Tooling API with Metadata XML
         """
         cursor = self.conn.cursor()
 
-        flow_id = flow_version['Id']
-        flow_api_name = flow_def['DeveloperName']
-        version_number = flow_version.get('VersionNumber', 1)
+        flow_id = flow['Id']
+
+        # Extract developer name from Definition relationship
+        definition = flow.get('Definition', {})
+        flow_api_name = definition.get('DeveloperName')
+        flow_label = definition.get('MasterLabel')
+
+        if not flow_api_name:
+            console.print(f"[yellow]⚠[/yellow] Skipping flow {flow_id}: No DeveloperName found")
+            return
+
+        version_number = flow.get('VersionNumber', 1)
+        status = flow.get('Status', 'Active')
 
         # Parse Flow XML if available
-        metadata_xml = flow_version.get('Metadata')
+        metadata_xml = flow.get('Metadata')
         if not metadata_xml:
+            console.print(f"[yellow]⚠[/yellow] Skipping flow {flow_api_name}: No metadata XML")
             return
 
         # Parse the Flow XML
@@ -483,7 +474,7 @@ class MetadataSync:
         element_counts = parsed['element_counts']
 
         # Insert flow metadata
-        # ProcessType is extracted from the Flow XML metadata, not from FlowDefinition
+        # ProcessType, trigger info, and status are all extracted from the Flow XML metadata
         cursor.execute("""
             INSERT OR REPLACE INTO sf_flow_metadata
             (flow_id, flow_api_name, flow_label, process_type, trigger_type, trigger_object,
@@ -492,9 +483,9 @@ class MetadataSync:
              synced_at, xml_parsed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            flow_id, flow_api_name, flow_def.get('MasterLabel'), metadata.get('process_type'),
+            flow_id, flow_api_name, flow_label or flow_api_name, metadata.get('process_type'),
             metadata.get('trigger_type'), metadata.get('trigger_object'),
-            metadata.get('is_active', False), version_number, metadata.get('status'),
+            status == 'Active', version_number, status,
             element_counts.get('total_elements', 0), element_counts.get('decisions', 0),
             element_counts.get('record_lookups', 0) > 0,
             element_counts.get('record_updates', 0) > 0,
