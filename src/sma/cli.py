@@ -12,6 +12,7 @@ from rich.table import Table
 from rapidfuzz import fuzz, process
 from .database import Database
 from .salesforce.connection import SalesforceConnection
+from . import completion
 
 console = Console()
 
@@ -274,7 +275,7 @@ def sf_list():
 
 
 @salesforce.command(name='switch')
-@click.argument('alias')
+@click.argument('alias', shell_complete=completion.complete_org_aliases)
 def sf_switch(alias):
     """Switch active Salesforce org.
 
@@ -295,7 +296,7 @@ def sf_switch(alias):
 
 
 @salesforce.command(name='disconnect')
-@click.option('--alias', default=None, help='Org alias to disconnect (disconnects active org if not specified)')
+@click.option('--alias', default=None, help='Org alias to disconnect (disconnects active org if not specified)', shell_complete=completion.complete_org_aliases)
 @click.confirmation_option(prompt='Are you sure you want to disconnect?')
 def sf_disconnect(alias):
     """Disconnect from Salesforce org.
@@ -398,7 +399,7 @@ def sf_sync(objects_only):
 
 @salesforce.command(name='search')
 @click.argument('query')
-@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)', shell_complete=completion.complete_org_aliases)
 @click.option('--limit', default=20, help='Maximum number of results to display (default: 20)')
 @click.option('--threshold', default=60, help='Minimum match score threshold (0-100, default: 60)')
 @click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
@@ -584,9 +585,9 @@ def sf_analyse():
 
 
 @sf_analyse.command(name='field-flows')
-@click.argument('object_name')
-@click.argument('field_name')
-@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.argument('object_name', shell_complete=completion.complete_salesforce_objects)
+@click.argument('field_name', shell_complete=completion.complete_salesforce_fields)
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)', shell_complete=completion.complete_org_aliases)
 @click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
 def analyse_field_flows(object_name, field_name, alias, format):
     """Show which flows use a specific field.
@@ -703,9 +704,9 @@ def analyse_field_flows(object_name, field_name, alias, format):
 
 
 @sf_analyse.command(name='field-triggers')
-@click.argument('object_name')
-@click.argument('field_name')
-@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.argument('object_name', shell_complete=completion.complete_salesforce_objects)
+@click.argument('field_name', shell_complete=completion.complete_salesforce_fields)
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)', shell_complete=completion.complete_org_aliases)
 @click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
 def analyse_field_triggers(object_name, field_name, alias, format):
     """Show which triggers reference a specific field.
@@ -819,9 +820,9 @@ def analyse_field_triggers(object_name, field_name, alias, format):
 
 
 @sf_analyse.command(name='field-deps')
-@click.argument('object_name')
-@click.argument('field_name')
-@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.argument('object_name', shell_complete=completion.complete_salesforce_objects)
+@click.argument('field_name', shell_complete=completion.complete_salesforce_fields)
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)', shell_complete=completion.complete_org_aliases)
 @click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
 def analyse_field_deps(object_name, field_name, alias, format):
     """Show all dependencies for a specific field.
@@ -920,8 +921,8 @@ def analyse_field_deps(object_name, field_name, alias, format):
 
 
 @sf_analyse.command(name='flow-fields')
-@click.argument('flow_name')
-@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.argument('flow_name', shell_complete=completion.complete_flow_names)
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)', shell_complete=completion.complete_org_aliases)
 @click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
 def analyse_flow_fields(flow_name, alias, format):
     """Show all fields used by a specific flow.
@@ -1022,8 +1023,8 @@ def analyse_flow_fields(flow_name, alias, format):
 
 
 @sf_analyse.command(name='object-relationships')
-@click.argument('object_name')
-@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.argument('object_name', shell_complete=completion.complete_salesforce_objects)
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)', shell_complete=completion.complete_org_aliases)
 @click.option('--direction', type=click.Choice(['all', 'parent', 'child'], case_sensitive=False), default='all', help='Relationship direction to show')
 @click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
 def analyse_object_relationships(object_name, alias, direction, format):
@@ -1188,6 +1189,109 @@ def analyse_object_relationships(object_name, alias, direction, format):
         console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
         import traceback
         traceback.print_exc()
+        raise click.Abort()
+
+
+# Completion commands group
+@main.group(name='completion')
+def completion_group():
+    """Shell completion installation and management."""
+    pass
+
+
+@completion_group.command(name='install')
+@click.argument('shell', type=click.Choice(['bash', 'zsh', 'fish', 'powershell'], case_sensitive=False))
+def completion_install(shell):
+    """Install shell completion for SMA.
+
+    Supports Bash, Zsh, Fish, and PowerShell 7+.
+
+    Example:
+        sma completion install bash
+        sma completion install zsh
+        sma completion install fish
+        sma completion install powershell
+    """
+    shell = shell.lower()
+
+    console.print(f"\n[bold cyan]Installing {shell.title()} completion for SMA[/bold cyan]\n")
+
+    if shell == 'bash':
+        console.print("[bold]Add this to your ~/.bashrc:[/bold]\n")
+        console.print("[cyan]eval \"$(_SMA_COMPLETE=bash_source sma)\"[/cyan]\n")
+        console.print("Then reload your shell or run: [yellow]source ~/.bashrc[/yellow]\n")
+
+    elif shell == 'zsh':
+        console.print("[bold]Add this to your ~/.zshrc:[/bold]\n")
+        console.print("[cyan]eval \"$(_SMA_COMPLETE=zsh_source sma)\"[/cyan]\n")
+        console.print("Then reload your shell or run: [yellow]source ~/.zshrc[/yellow]\n")
+
+    elif shell == 'fish':
+        console.print("[bold]Add this to your ~/.config/fish/completions/sma.fish:[/bold]\n")
+        console.print("[cyan]eval (env _SMA_COMPLETE=fish_source sma)[/cyan]\n")
+        console.print("Fish will automatically load completions on next launch.\n")
+
+    elif shell == 'powershell':
+        console.print("[bold]PowerShell 7+ required (not PowerShell 5.1)[/bold]\n")
+        console.print("Add this to your PowerShell profile:\n")
+        console.print("[cyan]Invoke-Expression (& sma completion show powershell)[/cyan]\n")
+        console.print("\nFind your profile location with: [yellow]$PROFILE[/yellow]")
+        console.print("Then reload with: [yellow]. $PROFILE[/yellow]\n")
+
+    console.print("[dim]Note: You may need to restart your terminal for changes to take effect.[/dim]\n")
+
+
+@completion_group.command(name='show')
+@click.argument('shell', type=click.Choice(['bash', 'zsh', 'fish', 'powershell'], case_sensitive=False))
+def completion_show(shell):
+    """Show completion script for a specific shell.
+
+    This outputs the raw completion script that would be installed.
+
+    Example:
+        sma completion show bash
+        sma completion show powershell
+    """
+    shell = shell.lower()
+
+    try:
+        import subprocess
+        import sys
+
+        if shell == 'bash':
+            env_var = '_SMA_COMPLETE=bash_source'
+        elif shell == 'zsh':
+            env_var = '_SMA_COMPLETE=zsh_source'
+        elif shell == 'fish':
+            env_var = '_SMA_COMPLETE=fish_source'
+        elif shell == 'powershell':
+            # For PowerShell, we need special handling with click-pwsh
+            try:
+                from click_pwsh import pwsh_complete
+                # Generate PowerShell completion script
+                click.echo(pwsh_complete(main))
+                return
+            except ImportError:
+                console.print("\n[bold red]Error:[/bold red] click-pwsh is not installed.\n")
+                console.print("Install it with: [cyan]pip install click-pwsh[/cyan]\n")
+                raise click.Abort()
+
+        # For Bash, Zsh, Fish - use Click's native completion
+        result = subprocess.run(
+            [sys.executable, '-m', 'sma.cli'],
+            env={**os.environ, env_var: 'sma'},
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            click.echo(result.stdout)
+        else:
+            console.print(f"\n[bold red]Error generating completion:[/bold red] {result.stderr}\n")
+            raise click.Abort()
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
         raise click.Abort()
 
 
