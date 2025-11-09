@@ -20,4 +20,4 @@ requests>=2.31.0
 lxml>=4.9.0
 
 # Database Browser
-datasette>=1.0.0
+datasette>=0.65.0
