@@ -1,8 +1,10 @@
 """Salesforce metadata synchronization module."""
 
 import json
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Dict, List, Optional
+from urllib.parse import quote
 from simple_salesforce import Salesforce
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -411,69 +413,143 @@ class MetadataSync:
         synced_count = 0
 
         try:
-            # Query for Flow definitions using Tooling API
-            query = """
-                SELECT Id, DeveloperName, MasterLabel, ProcessType, ActiveVersionId, LatestVersionId, Description
-                FROM FlowDefinition
-                WHERE IsActive = true
-            """
-            result = self.sf.toolingexecute(f"query/?q={query}")
-            flow_definitions = result.get('records', [])
+            # Query for active Flow versions using Tooling API
+            # Note: Cannot query Metadata field for multiple records (Salesforce limitation)
+            # Must retrieve Metadata for each flow individually
+            query = "SELECT Id, Definition.DeveloperName, Definition.MasterLabel, VersionNumber, Status FROM Flow WHERE Status = 'Active'"
+            encoded_query = quote(query)
+            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
+            active_flows = result.get('records', [])
 
-            for flow_def in flow_definitions:
-                # Get the active version's metadata
-                if flow_def.get('ActiveVersionId'):
-                    flow_version = self._get_flow_version(flow_def['ActiveVersionId'])
-                    if flow_version:
-                        # Parse the flow and extract dependencies
-                        self._process_flow_version(flow_def, flow_version)
-                        synced_count += 1
+            console.print(f"[dim]Found {len(active_flows)} active flows to process[/dim]")
+
+            for flow in active_flows:
+                # Fetch the full flow metadata (including XML)
+                flow_with_metadata = self._get_flow_metadata(flow['Id'])
+                if flow_with_metadata:
+                    # Merge the basic info with the full metadata
+                    flow_with_metadata['Definition'] = flow.get('Definition', {})
+                    flow_with_metadata['VersionNumber'] = flow.get('VersionNumber', 1)
+                    flow_with_metadata['Status'] = flow.get('Status', 'Active')
+
+                    # Parse the flow and extract dependencies
+                    self._process_flow(flow_with_metadata)
+                    synced_count += 1
 
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Error syncing flows: {e}")
+            import traceback
+            traceback.print_exc()
 
         self.conn.commit()
         return synced_count
 
-    def _get_flow_version(self, version_id: str) -> Optional[Dict]:
-        """Get Flow version details including XML metadata.
+    def _get_flow_metadata(self, flow_id: str) -> Optional[Dict]:
+        """Get Flow metadata including XML for a single flow.
 
         Args:
-            version_id: Flow version ID
+            flow_id: Flow record ID
 
         Returns:
-            Flow version record with metadata
+            Flow record with Metadata XML, or None if retrieval fails
         """
         try:
-            query = f"""
-                SELECT Id, Definition.DeveloperName, VersionNumber, Status, Metadata
-                FROM Flow
-                WHERE Id = '{version_id}'
-            """
-            result = self.sf.toolingexecute(f"query/?q={query}")
+            # Query single flow by ID to get Metadata field
+            # Salesforce only allows Metadata field retrieval for single records
+            query = f"SELECT Id, Metadata FROM Flow WHERE Id = '{flow_id}'"
+            encoded_query = quote(query)
+            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
             records = result.get('records', [])
             return records[0] if records else None
         except Exception as e:
-            console.print(f"[yellow]⚠[/yellow] Error getting flow version {version_id}: {e}")
+            console.print(f"[yellow]⚠[/yellow] Error getting metadata for flow {flow_id}: {e}")
             return None
 
-    def _process_flow_version(self, flow_def: Dict, flow_version: Dict):
-        """Process a flow version and extract dependencies.
+    def _dict_to_flow_xml(self, metadata_dict: Dict) -> str:
+        """Convert Salesforce Flow metadata dictionary to XML string.
 
         Args:
-            flow_def: Flow definition record
-            flow_version: Flow version record with XML
+            metadata_dict: Flow metadata as dictionary from Tooling API
+
+        Returns:
+            XML string representation of the Flow
+        """
+        # Flow namespace
+        ns = 'http://soap.sforce.com/2006/04/metadata'
+        ET.register_namespace('', ns)
+
+        # Create root element
+        root = ET.Element(f'{{{ns}}}Flow')
+
+        # Recursively build XML from dictionary
+        self._dict_to_xml_recursive(metadata_dict, root, ns)
+
+        # Convert to string
+        return ET.tostring(root, encoding='unicode')
+
+    def _dict_to_xml_recursive(self, data: any, parent: ET.Element, ns: str):
+        """Recursively convert dictionary to XML elements.
+
+        Args:
+            data: Dictionary, list, or value to convert
+            parent: Parent XML element
+            ns: XML namespace
+        """
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, list):
+                    # Create multiple child elements for lists
+                    for item in value:
+                        child = ET.SubElement(parent, f'{{{ns}}}{key}')
+                        self._dict_to_xml_recursive(item, child, ns)
+                elif isinstance(value, dict):
+                    # Create child element and recurse
+                    child = ET.SubElement(parent, f'{{{ns}}}{key}')
+                    self._dict_to_xml_recursive(value, child, ns)
+                elif value is not None:
+                    # Create child element with text value
+                    child = ET.SubElement(parent, f'{{{ns}}}{key}')
+                    child.text = str(value)
+        elif data is not None:
+            # Set text directly if not a dict
+            parent.text = str(data)
+
+    def _process_flow(self, flow: Dict):
+        """Process a flow and extract dependencies.
+
+        Args:
+            flow: Flow record from Tooling API with Metadata XML
         """
         cursor = self.conn.cursor()
 
-        flow_id = flow_version['Id']
-        flow_api_name = flow_def['DeveloperName']
-        version_number = flow_version.get('VersionNumber', 1)
+        flow_id = flow['Id']
 
-        # Parse Flow XML if available
-        metadata_xml = flow_version.get('Metadata')
-        if not metadata_xml:
+        # Extract developer name from Definition relationship
+        definition = flow.get('Definition', {})
+        flow_api_name = definition.get('DeveloperName')
+        flow_label = definition.get('MasterLabel')
+
+        if not flow_api_name:
+            console.print(f"[yellow]⚠[/yellow] Skipping flow {flow_id}: No DeveloperName found")
             return
+
+        version_number = flow.get('VersionNumber', 1)
+        status = flow.get('Status', 'Active')
+
+        # Get Flow Metadata (returned as dict from Tooling API)
+        metadata_obj = flow.get('Metadata')
+        if not metadata_obj:
+            console.print(f"[yellow]⚠[/yellow] Skipping flow {flow_api_name}: No metadata")
+            return
+
+        # Convert metadata dict to XML string if needed
+        if isinstance(metadata_obj, dict):
+            # Salesforce Tooling API returns Metadata as a parsed dictionary
+            # We need to convert it to XML for the parser
+            metadata_xml = self._dict_to_flow_xml(metadata_obj)
+        else:
+            # Already a string
+            metadata_xml = metadata_obj
 
         # Parse the Flow XML
         parsed = self.flow_parser.parse_flow_xml(metadata_xml)
@@ -487,6 +563,7 @@ class MetadataSync:
         element_counts = parsed['element_counts']
 
         # Insert flow metadata
+        # ProcessType, trigger info, and status are all extracted from the Flow XML metadata
         cursor.execute("""
             INSERT OR REPLACE INTO sf_flow_metadata
             (flow_id, flow_api_name, flow_label, process_type, trigger_type, trigger_object,
@@ -495,9 +572,9 @@ class MetadataSync:
              synced_at, xml_parsed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            flow_id, flow_api_name, flow_def.get('MasterLabel'), flow_def.get('ProcessType'),
+            flow_id, flow_api_name, flow_label or flow_api_name, metadata.get('process_type'),
             metadata.get('trigger_type'), metadata.get('trigger_object'),
-            metadata.get('is_active', False), version_number, metadata.get('status'),
+            status == 'Active', version_number, status,
             element_counts.get('total_elements', 0), element_counts.get('decisions', 0),
             element_counts.get('record_lookups', 0) > 0,
             element_counts.get('record_updates', 0) > 0,
@@ -545,12 +622,9 @@ class MetadataSync:
 
         try:
             # Query for active Apex triggers using Tooling API
-            query = """
-                SELECT Id, Name, TableEnumOrId, Status, ApiVersion, CreatedDate, LastModifiedDate, Body
-                FROM ApexTrigger
-                WHERE Status = 'Active'
-            """
-            result = self.sf.toolingexecute(f"query/?q={query}")
+            query = "SELECT Id, Name, TableEnumOrId, Status, ApiVersion, CreatedDate, LastModifiedDate, Body FROM ApexTrigger WHERE Status = 'Active'"
+            encoded_query = quote(query)
+            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
             triggers = result.get('records', [])
 
             for trigger in triggers:

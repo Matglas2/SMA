@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rapidfuzz import fuzz, process
 from .database import Database
 from .salesforce.connection import SalesforceConnection
@@ -388,7 +389,9 @@ def sf_disconnect(alias):
 
 @salesforce.command(name='sync')
 @click.option('--objects-only', is_flag=True, help='Sync only objects (skip fields)')
-def sf_sync(objects_only):
+@click.option('--flows-only', is_flag=True, help='Sync only flows and dependencies (skip objects/fields)')
+@click.option('--triggers-only', is_flag=True, help='Sync only triggers (skip objects/fields)')
+def sf_sync(objects_only, flows_only, triggers_only):
     """Sync Salesforce metadata to local database.
 
     Downloads object and field metadata from Salesforce and stores
@@ -398,6 +401,8 @@ def sf_sync(objects_only):
     Example:
         sma sf sync                    # Sync all metadata
         sma sf sync --objects-only     # Sync only objects
+        sma sf sync --flows-only       # Sync only flows
+        sma sf sync --triggers-only    # Sync only triggers
     """
     try:
         with Database() as db:
@@ -423,10 +428,51 @@ def sf_sync(objects_only):
             # Create metadata sync instance
             metadata_sync = MetadataSync(sf_client, db.conn, status['org_id'], status['org_name'])
 
+            # Check for mutually exclusive flags
+            selected_flags = sum([objects_only, flows_only, triggers_only])
+            if selected_flags > 1:
+                console.print("\n[bold red]✗ Error:[/bold red] Only one sync option can be used at a time.\n")
+                console.print("Choose one of: --objects-only, --flows-only, --triggers-only\n")
+                return
+
             if objects_only:
                 console.print("\n[bold cyan]Syncing objects only...[/bold cyan]\n")
                 count = metadata_sync.sync_sobjects()
                 console.print(f"\n[bold green]✓ Synced {count} objects![/bold green]\n")
+
+            elif flows_only:
+                console.print("\n[bold cyan]Syncing flows and dependencies...[/bold cyan]\n")
+
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console
+                ) as progress:
+                    task1 = progress.add_task("[cyan]Retrieving flow metadata and dependencies...", total=None)
+                    flow_count = metadata_sync.sync_flows_with_dependencies()
+                    progress.update(task1, completed=True)
+
+                console.print(f"\n[bold green]✓ Synced {flow_count} flows with field references![/bold green]\n")
+                console.print("You can now analyse flow dependencies:\n")
+                console.print(f"  [cyan]sma sf analyse field-flows Account Email[/cyan]")
+                console.print(f"  [cyan]sma sf analyse flow-fields \"Flow Name\"[/cyan]\n")
+
+            elif triggers_only:
+                console.print("\n[bold cyan]Syncing triggers...[/bold cyan]\n")
+
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console
+                ) as progress:
+                    task1 = progress.add_task("[cyan]Retrieving trigger metadata...", total=None)
+                    trigger_count = metadata_sync.sync_trigger_metadata()
+                    progress.update(task1, completed=True)
+
+                console.print(f"\n[bold green]✓ Synced {trigger_count} triggers![/bold green]\n")
+                console.print("You can now analyse trigger coverage:\n")
+                console.print(f"  [cyan]sma sf analyse field-triggers Account Email[/cyan]\n")
+
             else:
                 # Sync all metadata
                 console.print("\n[bold cyan]Starting metadata sync...[/bold cyan]\n")
