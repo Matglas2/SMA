@@ -95,6 +95,9 @@ class MetadataSync:
         sobjects_desc = self.sf.describe()
         sobjects = sobjects_desc['sobjects']
 
+        # Query EntityDefinition to get DurableIds for all objects
+        entity_durable_ids = self._get_entity_durable_ids()
+
         cursor = self.conn.cursor()
         synced_count = 0
 
@@ -110,47 +113,65 @@ class MetadataSync:
             is_updateable = sobject['updateable']
             is_deletable = sobject['deletable']
 
+            # Get Salesforce DurableId for this object
+            salesforce_id = entity_durable_ids.get(api_name, api_name)  # Fallback to api_name if not found
+
             # Store full metadata as JSON
             metadata_json = json.dumps(sobject)
 
-            # Check if sobject already exists
+            # Use UPSERT based on org_id and salesforce_id
             cursor.execute("""
-                SELECT id FROM sobjects
-                WHERE org_id = ? AND api_name = ?
-            """, (self.org_id, api_name))
-            existing = cursor.fetchone()
-
-            if existing:
-                # Update existing record (preserves ID and foreign key relationships)
-                cursor.execute("""
-                    UPDATE sobjects
-                    SET label = ?, plural_label = ?, is_custom = ?, key_prefix = ?,
-                        is_queryable = ?, is_createable = ?, is_updateable = ?, is_deletable = ?,
-                        metadata = ?, synced_at = ?
-                    WHERE id = ?
-                """, (
-                    label, plural_label, is_custom, key_prefix,
-                    is_queryable, is_createable, is_updateable, is_deletable,
-                    metadata_json, datetime.now().isoformat(), existing['id']
-                ))
-            else:
-                # Insert new record
-                cursor.execute("""
-                    INSERT INTO sobjects
-                    (org_id, api_name, label, plural_label, is_custom, key_prefix,
-                     is_queryable, is_createable, is_updateable, is_deletable,
-                     metadata, synced_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    self.org_id, api_name, label, plural_label, is_custom, key_prefix,
-                    is_queryable, is_createable, is_updateable, is_deletable,
-                    metadata_json, datetime.now().isoformat()
-                ))
+                INSERT INTO sobjects
+                (salesforce_id, org_id, api_name, label, plural_label, is_custom, key_prefix,
+                 is_queryable, is_createable, is_updateable, is_deletable,
+                 metadata, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(org_id, salesforce_id) DO UPDATE SET
+                    api_name = excluded.api_name,
+                    label = excluded.label,
+                    plural_label = excluded.plural_label,
+                    is_custom = excluded.is_custom,
+                    key_prefix = excluded.key_prefix,
+                    is_queryable = excluded.is_queryable,
+                    is_createable = excluded.is_createable,
+                    is_updateable = excluded.is_updateable,
+                    is_deletable = excluded.is_deletable,
+                    metadata = excluded.metadata,
+                    synced_at = excluded.synced_at
+            """, (
+                salesforce_id, self.org_id, api_name, label, plural_label, is_custom, key_prefix,
+                is_queryable, is_createable, is_updateable, is_deletable,
+                metadata_json, datetime.now().isoformat()
+            ))
 
             synced_count += 1
 
         self.conn.commit()
         return synced_count
+
+    def _get_entity_durable_ids(self) -> Dict[str, str]:
+        """Query EntityDefinition to get DurableIds for all objects.
+
+        Returns:
+            Dictionary mapping QualifiedApiName to DurableId
+        """
+        durable_ids = {}
+        try:
+            # Query EntityDefinition for all entities
+            query = "SELECT QualifiedApiName, DurableId FROM EntityDefinition"
+            result = self.sf.query_all(query)
+
+            for record in result.get('records', []):
+                api_name = record.get('QualifiedApiName')
+                durable_id = record.get('DurableId')
+                if api_name and durable_id:
+                    durable_ids[api_name] = durable_id
+
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Could not query EntityDefinition: {e}")
+            console.print("[yellow]⚠[/yellow] Falling back to using API names as identifiers")
+
+        return durable_ids
 
     def sync_fields(self) -> int:
         """Sync field metadata for all objects.
@@ -160,9 +181,12 @@ class MetadataSync:
         """
         cursor = self.conn.cursor()
 
+        # Query FieldDefinition to get DurableIds for all fields
+        field_durable_ids = self._get_field_durable_ids()
+
         # Get all sobjects from database
         cursor.execute("""
-            SELECT id, org_id, api_name
+            SELECT id, salesforce_id, org_id, api_name
             FROM sobjects
             WHERE org_id = ?
         """, (self.org_id,))
@@ -172,6 +196,7 @@ class MetadataSync:
 
         for sobject_row in sobjects:
             sobject_id = sobject_row['id']
+            sobject_salesforce_id = sobject_row['salesforce_id']
             sobject_api_name = sobject_row['api_name']
 
             # Get detailed object description with fields
@@ -184,18 +209,47 @@ class MetadataSync:
             fields = obj_desc.get('fields', [])
 
             for field in fields:
-                field_count = self._sync_field(sobject_id, field)
+                field_count = self._sync_field(sobject_id, sobject_salesforce_id, sobject_api_name, field, field_durable_ids)
                 total_fields += field_count
 
         self.conn.commit()
         return total_fields
 
-    def _sync_field(self, sobject_id: int, field_data: Dict) -> int:
+    def _get_field_durable_ids(self) -> Dict[str, str]:
+        """Query FieldDefinition to get DurableIds for all fields.
+
+        Returns:
+            Dictionary mapping QualifiedApiName (Object.Field) to DurableId
+        """
+        durable_ids = {}
+        try:
+            # Query FieldDefinition for all fields
+            # Note: We need to batch this or use query_all to handle large result sets
+            query = "SELECT QualifiedApiName, DurableId, EntityDefinitionId FROM FieldDefinition"
+            result = self.sf.query_all(query)
+
+            for record in result.get('records', []):
+                qualified_name = record.get('QualifiedApiName')
+                durable_id = record.get('DurableId')
+                if qualified_name and durable_id:
+                    durable_ids[qualified_name] = durable_id
+
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Could not query FieldDefinition: {e}")
+            console.print("[yellow]⚠[/yellow] Falling back to using qualified names as identifiers")
+
+        return durable_ids
+
+    def _sync_field(self, sobject_id: int, sobject_salesforce_id: str, sobject_api_name: str,
+                    field_data: Dict, field_durable_ids: Dict[str, str]) -> int:
         """Sync a single field.
 
         Args:
-            sobject_id: Database ID of the parent sobject
+            sobject_id: Database ID of the parent sobject (legacy, for backwards compatibility)
+            sobject_salesforce_id: Salesforce DurableId of the parent sobject
+            sobject_api_name: API name of the parent sobject
             field_data: Field metadata from Salesforce
+            field_durable_ids: Dictionary of field qualified names to DurableIds
 
         Returns:
             1 if field was synced, 0 otherwise
@@ -229,41 +283,40 @@ class MetadataSync:
         # Store full metadata as JSON
         metadata_json = json.dumps(field_data)
 
-        # Check if field already exists
-        cursor.execute("""
-            SELECT id FROM fields
-            WHERE org_id = ? AND sobject_id = ? AND api_name = ?
-        """, (self.org_id, sobject_id, api_name))
-        existing = cursor.fetchone()
+        # Get Salesforce DurableId for this field
+        qualified_name = f"{sobject_api_name}.{api_name}"
+        salesforce_id = field_durable_ids.get(qualified_name, qualified_name)  # Fallback to qualified name
 
-        if existing:
-            # Update existing record (preserves ID)
-            cursor.execute("""
-                UPDATE fields
-                SET label = ?, type = ?, length = ?, is_custom = ?,
-                    is_required = ?, is_unique = ?, reference_to = ?, relationship_name = ?,
-                    formula = ?, default_value = ?, help_text = ?, metadata = ?, synced_at = ?
-                WHERE id = ?
-            """, (
-                label, field_type, length, is_custom,
-                is_required, is_unique, reference_to, relationship_name,
-                formula, default_value, help_text, metadata_json,
-                datetime.now().isoformat(), existing['id']
-            ))
-        else:
-            # Insert new record
-            cursor.execute("""
-                INSERT INTO fields
-                (org_id, sobject_id, api_name, label, type, length, is_custom,
-                 is_required, is_unique, reference_to, relationship_name, formula,
-                 default_value, help_text, metadata, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                self.org_id, sobject_id, api_name, label, field_type, length,
-                is_custom, is_required, is_unique, reference_to, relationship_name,
-                formula, default_value, help_text, metadata_json,
-                datetime.now().isoformat()
-            ))
+        # Use UPSERT based on org_id and salesforce_id
+        cursor.execute("""
+            INSERT INTO fields
+            (salesforce_id, org_id, sobject_salesforce_id, sobject_id, api_name, label, type, length, is_custom,
+             is_required, is_unique, reference_to, relationship_name, formula,
+             default_value, help_text, metadata, synced_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(org_id, salesforce_id) DO UPDATE SET
+                sobject_salesforce_id = excluded.sobject_salesforce_id,
+                sobject_id = excluded.sobject_id,
+                api_name = excluded.api_name,
+                label = excluded.label,
+                type = excluded.type,
+                length = excluded.length,
+                is_custom = excluded.is_custom,
+                is_required = excluded.is_required,
+                is_unique = excluded.is_unique,
+                reference_to = excluded.reference_to,
+                relationship_name = excluded.relationship_name,
+                formula = excluded.formula,
+                default_value = excluded.default_value,
+                help_text = excluded.help_text,
+                metadata = excluded.metadata,
+                synced_at = excluded.synced_at
+        """, (
+            salesforce_id, self.org_id, sobject_salesforce_id, sobject_id, api_name, label, field_type, length,
+            is_custom, is_required, is_unique, reference_to, relationship_name,
+            formula, default_value, help_text, metadata_json,
+            datetime.now().isoformat()
+        ))
 
         return 1
 
@@ -557,7 +610,7 @@ class MetadataSync:
             SELECT f.api_name as field_name, f.reference_to, f.relationship_name,
                    f.type, f.metadata, s.api_name as object_name
             FROM fields f
-            JOIN sobjects s ON f.sobject_id = s.id
+            JOIN sobjects s ON f.sobject_salesforce_id = s.salesforce_id
             WHERE f.org_id = ? AND f.reference_to IS NOT NULL
         """, (self.org_id,))
 

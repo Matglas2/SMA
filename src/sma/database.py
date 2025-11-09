@@ -237,6 +237,7 @@ class Database:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sobjects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                salesforce_id TEXT,
                 org_id TEXT NOT NULL,
                 api_name TEXT NOT NULL,
                 label TEXT,
@@ -249,11 +250,16 @@ class Database:
                 is_deletable BOOLEAN,
                 metadata TEXT,
                 synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(org_id, salesforce_id),
                 UNIQUE(org_id, api_name)
             )
         """)
 
         # Create indexes for sobjects
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sobject_salesforce_id ON sobjects(salesforce_id)
+        """)
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_sobject_org_api ON sobjects(org_id, api_name)
         """)
@@ -270,8 +276,10 @@ class Database:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS fields (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                salesforce_id TEXT,
                 org_id TEXT NOT NULL,
-                sobject_id INTEGER NOT NULL,
+                sobject_salesforce_id TEXT NOT NULL,
+                sobject_id INTEGER,
                 api_name TEXT NOT NULL,
                 label TEXT,
                 type TEXT,
@@ -286,12 +294,21 @@ class Database:
                 help_text TEXT,
                 metadata TEXT,
                 synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (sobject_id) REFERENCES sobjects(id) ON DELETE CASCADE,
-                UNIQUE(org_id, sobject_id, api_name)
+                FOREIGN KEY (sobject_salesforce_id) REFERENCES sobjects(salesforce_id) ON DELETE CASCADE,
+                UNIQUE(org_id, salesforce_id),
+                UNIQUE(org_id, sobject_salesforce_id, api_name)
             )
         """)
 
         # Create indexes for fields
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_salesforce_id ON fields(salesforce_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_sobject_sf_id ON fields(sobject_salesforce_id)
+        """)
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_field_org_sobject ON fields(org_id, sobject_id)
         """)
