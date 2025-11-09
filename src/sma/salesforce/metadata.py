@@ -413,7 +413,8 @@ class MetadataSync:
 
         try:
             # Query for Flow definitions using Tooling API
-            query = "SELECT Id, DeveloperName, MasterLabel, ProcessType, ActiveVersionId, LatestVersionId, Description FROM FlowDefinition WHERE IsActive = true"
+            # Note: ProcessType field is not available on FlowDefinition in all orgs/API versions
+            query = "SELECT Id, DeveloperName, MasterLabel, ActiveVersionId, LatestVersionId, Description FROM FlowDefinition WHERE IsActive = true"
             encoded_query = quote(query)
             result = self.sf.toolingexecute(f"query/?q={encoded_query}")
             flow_definitions = result.get('records', [])
@@ -482,6 +483,7 @@ class MetadataSync:
         element_counts = parsed['element_counts']
 
         # Insert flow metadata
+        # ProcessType is extracted from the Flow XML metadata, not from FlowDefinition
         cursor.execute("""
             INSERT OR REPLACE INTO sf_flow_metadata
             (flow_id, flow_api_name, flow_label, process_type, trigger_type, trigger_object,
@@ -490,7 +492,7 @@ class MetadataSync:
              synced_at, xml_parsed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            flow_id, flow_api_name, flow_def.get('MasterLabel'), flow_def.get('ProcessType'),
+            flow_id, flow_api_name, flow_def.get('MasterLabel'), metadata.get('process_type'),
             metadata.get('trigger_type'), metadata.get('trigger_object'),
             metadata.get('is_active', False), version_number, metadata.get('status'),
             element_counts.get('total_elements', 0), element_counts.get('decisions', 0),
