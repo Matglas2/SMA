@@ -32,9 +32,8 @@ All features must be documented in this folder with the following information:
 5. [Metadata Synchronization](features/metadata-sync.md) - Download and cache Salesforce object and field metadata
 
 ### MVP Phase 3: Dependency Tracking & Analysis
-6. [Flow Extraction](features/flow-extraction.md) - Extract Flow definitions and field references from Salesforce
-7. [Analyse Commands](features/analyse-commands.md) - Query field dependencies, Flow usage, and object relationships
-8. [Fuzzy Search](features/fuzzy-search.md) - Intelligent field search with fuzzy matching
+6. [Analyse Commands](features/analyse-commands.md) - Query field dependencies, Flow usage, and object relationships
+7. [Fuzzy Search](features/fuzzy-search.md) - Intelligent field search with fuzzy matching
 
 ## Planned Features (MVP)
 
