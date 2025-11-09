@@ -222,17 +222,30 @@ class MetadataSync:
             Dictionary mapping QualifiedApiName (Object.Field) to DurableId
         """
         durable_ids = {}
-        try:
-            # Query FieldDefinition for all fields
-            # Note: We need to batch this or use query_all to handle large result sets
-            query = "SELECT QualifiedApiName, DurableId, EntityDefinitionId FROM FieldDefinition"
-            result = self.sf.query_all(query)
 
-            for record in result.get('records', []):
-                qualified_name = record.get('QualifiedApiName')
-                durable_id = record.get('DurableId')
-                if qualified_name and durable_id:
-                    durable_ids[qualified_name] = durable_id
+        try:
+            # Get all EntityDefinition DurableIds first
+            entity_durable_ids = self._get_entity_durable_ids()
+
+            if not entity_durable_ids:
+                console.print("[yellow]⚠[/yellow] No EntityDefinition IDs available for field query")
+                return durable_ids
+
+            # Query FieldDefinition for each entity
+            # Salesforce requires filtering by EntityDefinitionId or DurableId
+            for entity_name, entity_durable_id in entity_durable_ids.items():
+                try:
+                    query = f"SELECT QualifiedApiName, DurableId, EntityDefinitionId FROM FieldDefinition WHERE EntityDefinitionId = '{entity_durable_id}'"
+                    result = self.sf.query_all(query)
+
+                    for record in result.get('records', []):
+                        qualified_name = record.get('QualifiedApiName')
+                        durable_id = record.get('DurableId')
+                        if qualified_name and durable_id:
+                            durable_ids[qualified_name] = durable_id
+                except Exception as entity_error:
+                    # Skip entities that fail (some might not have queryable fields)
+                    pass
 
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Could not query FieldDefinition: {e}")
@@ -400,7 +413,7 @@ class MetadataSync:
         try:
             # Query for Flow definitions using Tooling API
             query = """
-                SELECT Id, ApiName, Label, ProcessType, ActiveVersionId, LatestVersionId, Description
+                SELECT Id, DeveloperName, MasterLabel, ProcessType, ActiveVersionId, LatestVersionId, Description
                 FROM FlowDefinition
                 WHERE IsActive = true
             """
@@ -454,7 +467,7 @@ class MetadataSync:
         cursor = self.conn.cursor()
 
         flow_id = flow_version['Id']
-        flow_api_name = flow_def['ApiName']
+        flow_api_name = flow_def['DeveloperName']
         version_number = flow_version.get('VersionNumber', 1)
 
         # Parse Flow XML if available
@@ -482,7 +495,7 @@ class MetadataSync:
              synced_at, xml_parsed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            flow_id, flow_api_name, flow_def.get('Label'), flow_def.get('ProcessType'),
+            flow_id, flow_api_name, flow_def.get('MasterLabel'), flow_def.get('ProcessType'),
             metadata.get('trigger_type'), metadata.get('trigger_object'),
             metadata.get('is_active', False), version_number, metadata.get('status'),
             element_counts.get('total_elements', 0), element_counts.get('decisions', 0),
@@ -625,7 +638,8 @@ class MetadataSync:
 
                 # Determine relationship type
                 field_type = field['type']
-                metadata = json.loads(field.get('metadata', '{}'))
+                metadata_str = field['metadata'] if field['metadata'] else '{}'
+                metadata = json.loads(metadata_str)
 
                 is_master_detail = (field_type == 'MasterDetail')
                 is_lookup = (field_type == 'Lookup')
