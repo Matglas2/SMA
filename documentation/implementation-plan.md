@@ -134,7 +134,7 @@ This document outlines the implementation plan for integrating Salesforce metada
 
 ### Phase 4: Shell Autocomplete (MVP - Step 4)
 **Goal:** Add intelligent shell autocomplete for commands and data
-**Status:** ✅ Completed (2025-11-09)
+**Status:** 📋 Planned
 
 **Overview:**
 Implement multi-shell autocomplete support using Click 8.x native completion and click-pwsh for PowerShell 7. Autocomplete will be powered by dynamic database queries to suggest object names, field names, flow names, and org aliases while typing.
@@ -241,15 +241,6 @@ sma sf switch prod<TAB>
 - **argcomplete** - Requires argparse instead of Click
 - **Custom PowerShell module** - Too much maintenance overhead
 - **Decision:** Use Click 8.x + click-pwsh for maximum compatibility
-
-**Implemented Commands:**
-- `sma completion install <shell>` - Show installation instructions for shell
-- `sma completion show <shell>` - Display completion script
-
-**Completion Applied To:**
-- All analyse commands (object_name, field_name, flow_name arguments)
-- All --alias options across SF commands
-- sma sf switch command (alias argument)
 
 ---
 
