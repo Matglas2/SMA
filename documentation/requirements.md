@@ -166,7 +166,7 @@ User should be able to ask:
    - Object → Flow mappings
    - Code → Field references
 
-See [DATABASE_DESIGN.md](DATABASE_DESIGN.md) for detailed schema.
+See [database-design.md](database-design.md) for detailed schema.
 
 ---
 
@@ -186,7 +186,7 @@ See [DATABASE_DESIGN.md](DATABASE_DESIGN.md) for detailed schema.
 
 **Change:** Track requirements and database design
 - **Request:** "Please keep a file with a constantly updated overview of the requirements and features of the app so far including what i asked and changed over time"
-- **Implementation:** Created REQUIREMENTS.md and DATABASE_DESIGN.md
+- **Implementation:** Created requirements.md and database-design.md
 - **Outcome:** Complete lineage tracking for project evolution
 
 **Change:** Salesforce troubleshooting vision

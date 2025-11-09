@@ -4,8 +4,9 @@ This folder contains comprehensive documentation for the SMA (Salesforce Metadat
 
 ## Core Documentation
 
-- **[REQUIREMENTS.md](REQUIREMENTS.md)** - Complete requirements tracking, feature roadmap, and evolution timeline
-- **[DATABASE_DESIGN.md](DATABASE_DESIGN.md)** - Database schema design, current and planned tables
+- **[requirements.md](requirements.md)** - Complete requirements tracking, feature roadmap, and evolution timeline
+- **[database-design.md](database-design.md)** - Database schema design, current and planned tables
+- **[implementation-plan.md](implementation-plan.md)** - Technical implementation roadmap for Salesforce integration
 - **[setup.md](setup.md)** - Installation and setup guide
 
 ## Documentation Standards
@@ -28,4 +29,4 @@ All features must be documented in this folder with the following information:
 
 ## Planned Features (MVP)
 
-See [REQUIREMENTS.md](REQUIREMENTS.md) for the complete list of planned Salesforce integration features.
+See [requirements.md](requirements.md) for the complete list of planned Salesforce integration features.
