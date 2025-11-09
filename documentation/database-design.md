@@ -529,8 +529,352 @@ sma db optimize
 
 ## Change Log
 
+### 2025-11-09
+- ✅ Implemented Phase 3: Flow Dependencies & Relationship Tracking
+- Added 7 new tables for comprehensive dependency and relationship modeling
+- Integrated Flow XML parser for field reference extraction
+- Added trigger inventory with event tracking
+- Created central field dependency tracking system
+- Designed MCP-ready data model for future AI integration
+
 ### 2025-11-08
 - Created initial database design documentation
 - Defined current schema (greetings, quotes)
 - Planned complete Salesforce metadata schema
 - Added query patterns and examples
+
+---
+
+## Phase 3 Schema (v0.3.0) - ✅ Implemented
+
+### Overview
+Phase 3 implements comprehensive dependency tracking and relationship modeling specifically designed for MCP (Model Context Protocol) integration and AI-powered analysis.
+
+**Design Principles:**
+1. **Relationship-First**: Model all relationships between entities explicitly
+2. **Future-Proof**: Optimize for graph queries and MCP integration
+3. **Denormalized Where Useful**: Store computed relationships for fast queries
+4. **Audit Trail**: Track sync times, data freshness, and changes
+5. **Queryable**: Optimize for common troubleshooting questions
+
+---
+
+### Phase 3 Tables
+
+#### Table: `sf_field_dependencies`
+**Status:** ✅ Implemented (Phase 3)
+**Purpose:** Central dependency tracking - Links fields to all automations that reference them
+
+```sql
+CREATE TABLE IF NOT EXISTS sf_field_dependencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    connection_alias TEXT NOT NULL,        -- Which org this is from
+    object_name TEXT NOT NULL,             -- Object API name (e.g., 'Account')
+    field_name TEXT NOT NULL,              -- Field API name (e.g., 'Email__c')
+    dependent_type TEXT NOT NULL,          -- Type: 'flow', 'trigger', 'validation_rule', 'process_builder'
+    dependent_id TEXT NOT NULL,            -- ID of the dependent automation
+    dependent_name TEXT,                   -- Name of automation (for easy querying)
+    reference_type TEXT,                   -- How it's used: 'read', 'write', 'filter', 'assignment'
+    line_number INTEGER,                   -- Line/position in source (if applicable)
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_verified DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Indexes:**
+- `idx_field_dep_object_field` on `(object_name, field_name)` - Find all dependencies for a field
+- `idx_field_dep_dependent` on `(dependent_type, dependent_id)` - Find all fields used by an automation
+- `idx_field_dep_alias` on `connection_alias` - Filter by org
+
+**Example Queries:**
+```sql
+-- What flows use Account.Email?
+SELECT dependent_name, reference_type
+FROM sf_field_dependencies
+WHERE object_name = 'Account'
+  AND field_name = 'Email'
+  AND dependent_type = 'flow';
+
+-- What fields does "Lead Conversion Flow" touch?
+SELECT object_name, field_name, reference_type
+FROM sf_field_dependencies
+WHERE dependent_name = 'Lead_Conversion_Flow';
+```
+
+---
+
+#### Table: `sf_flow_field_references`
+**Status:** ✅ Implemented (Phase 3)
+**Purpose:** Detailed flow field references with context from Flow XML
+
+```sql
+CREATE TABLE IF NOT EXISTS sf_flow_field_references (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    flow_id TEXT NOT NULL,                 -- Flow record ID from sf_flows
+    flow_api_name TEXT NOT NULL,           -- Flow API name (denormalized for queries)
+    flow_version INTEGER,                  -- Flow version number
+    object_name TEXT NOT NULL,             -- Object being referenced
+    field_name TEXT NOT NULL,              -- Field being referenced
+    element_name TEXT,                     -- Flow element name (e.g., 'Get_Account_Record')
+    element_type TEXT,                     -- 'recordLookup', 'recordUpdate', 'assignment', 'decision'
+    is_input BOOLEAN DEFAULT 0,            -- Is this field used as input?
+    is_output BOOLEAN DEFAULT 0,           -- Is this field being set/updated?
+    variable_name TEXT,                    -- Flow variable name if assigned
+    xpath_location TEXT,                   -- XPath to element in Flow XML
+    extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Indexes:**
+- `idx_flow_ref_flow` on `(flow_id, flow_version)` - All references for a specific flow version
+- `idx_flow_ref_field` on `(object_name, field_name)` - Find flows using a specific field
+- `idx_flow_ref_element_type` on `element_type` - Group by operation type
+
+---
+
+#### Table: `sf_field_relationships`
+**Status:** ✅ Implemented (Phase 3)
+**Purpose:** Model all field-level relationships (lookups, master-detail, formula references)
+
+```sql
+CREATE TABLE IF NOT EXISTS sf_field_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    connection_alias TEXT NOT NULL,        -- Which org
+    source_object TEXT NOT NULL,           -- Object where the relationship field exists
+    source_field TEXT NOT NULL,            -- The relationship field name
+    relationship_type TEXT NOT NULL,       -- 'lookup', 'master_detail', 'external_lookup', 'formula_reference'
+    target_object TEXT,                    -- Object being referenced
+    target_field TEXT,                     -- Field on target object (if specific)
+    relationship_name TEXT,                -- API relationship name (e.g., 'Account.Contacts')
+    is_cascade_delete BOOLEAN DEFAULT 0,   -- For master-detail
+    is_reparentable BOOLEAN DEFAULT 1,     -- Can the parent be changed?
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Indexes:**
+- `idx_field_rel_source` on `(source_object, source_field)` - Find relationship details
+- `idx_field_rel_target` on `target_object` - Find all fields pointing TO an object
+- `idx_field_rel_type` on `relationship_type` - Filter by relationship type
+
+**Example Queries:**
+```sql
+-- What objects have lookups to Account?
+SELECT DISTINCT source_object, source_field
+FROM sf_field_relationships
+WHERE target_object = 'Account'
+  AND relationship_type IN ('lookup', 'master_detail');
+
+-- Is Opportunity.AccountId a master-detail?
+SELECT relationship_type, is_cascade_delete
+FROM sf_field_relationships
+WHERE source_object = 'Opportunity'
+  AND source_field = 'AccountId';
+```
+
+---
+
+#### Table: `sf_object_relationships`
+**Status:** ✅ Implemented (Phase 3)
+**Purpose:** High-level object-to-object relationship summary
+
+```sql
+CREATE TABLE IF NOT EXISTS sf_object_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    connection_alias TEXT NOT NULL,        -- Which org
+    parent_object TEXT NOT NULL,           -- Parent in the relationship
+    child_object TEXT NOT NULL,            -- Child in the relationship
+    relationship_field TEXT NOT NULL,      -- Field that creates the relationship
+    relationship_type TEXT NOT NULL,       -- 'lookup', 'master_detail', 'hierarchy'
+    relationship_name TEXT,                -- API relationship name
+    child_count_estimate INTEGER           -- Approximate number of child records (if known)
+)
+```
+
+**Indexes:**
+- `idx_obj_rel_parent` on `parent_object` - Find all children of an object
+- `idx_obj_rel_child` on `child_object` - Find all parents of an object
+
+---
+
+#### Table: `sf_trigger_metadata`
+**Status:** ✅ Implemented (Phase 3)
+**Purpose:** Enhanced trigger inventory with structured event tracking
+
+```sql
+CREATE TABLE IF NOT EXISTS sf_trigger_metadata (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger_id TEXT UNIQUE NOT NULL,       -- ApexTrigger.Id from Salesforce
+    trigger_name TEXT NOT NULL,            -- Trigger API name
+    object_name TEXT NOT NULL,             -- Object (denormalized)
+    is_before_insert BOOLEAN DEFAULT 0,    -- Runs on before insert
+    is_before_update BOOLEAN DEFAULT 0,    -- Runs on before update
+    is_before_delete BOOLEAN DEFAULT 0,    -- Runs on before delete
+    is_after_insert BOOLEAN DEFAULT 0,     -- Runs on after insert
+    is_after_update BOOLEAN DEFAULT 0,     -- Runs on after update
+    is_after_delete BOOLEAN DEFAULT 0,     -- Runs on after delete
+    is_after_undelete BOOLEAN DEFAULT 0,   -- Runs on after undelete
+    is_active BOOLEAN DEFAULT 1,           -- Is the trigger active?
+    created_date DATETIME,                 -- When trigger was created in SF
+    last_modified_date DATETIME,           -- When trigger was last modified in SF
+    synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Indexes:**
+- `idx_trigger_meta_object` on `object_name` - All triggers for an object
+- `idx_trigger_meta_active` on `is_active` - Only active triggers
+
+**Example Queries:**
+```sql
+-- What triggers run on Account after update?
+SELECT trigger_name
+FROM sf_trigger_metadata
+WHERE object_name = 'Account'
+  AND is_after_update = TRUE
+  AND is_active = TRUE;
+
+-- How many triggers are there per object?
+SELECT object_name, COUNT(*) as trigger_count
+FROM sf_trigger_metadata
+WHERE is_active = TRUE
+GROUP BY object_name
+ORDER BY trigger_count DESC;
+```
+
+---
+
+#### Table: `sf_flow_metadata`
+**Status:** ✅ Implemented (Phase 3)
+**Purpose:** Enhanced flow metadata with element counts and complexity metrics
+
+```sql
+CREATE TABLE IF NOT EXISTS sf_flow_metadata (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    flow_id TEXT NOT NULL,                 -- Flow.Id from Salesforce
+    flow_api_name TEXT NOT NULL,           -- Unique API name
+    flow_label TEXT,                       -- User-friendly label
+    process_type TEXT,                     -- 'Flow', 'Workflow', 'AutoLaunchedFlow', etc.
+    trigger_type TEXT,                     -- 'RecordAfterSave', 'RecordBeforeSave', 'Scheduled', etc.
+    trigger_object TEXT,                   -- Object that triggers the flow (if applicable)
+    is_active BOOLEAN DEFAULT 0,           -- Is this the active version?
+    is_template BOOLEAN DEFAULT 0,         -- Is this a template flow?
+    version_number INTEGER,                -- Flow version
+    status TEXT,                           -- 'Active', 'Draft', 'Obsolete'
+    element_count INTEGER,                 -- Number of elements in flow
+    decision_count INTEGER,                -- Number of decision elements
+    has_record_lookups BOOLEAN DEFAULT 0,  -- Contains Get Records
+    has_record_updates BOOLEAN DEFAULT 0,  -- Contains Update Records
+    has_record_creates BOOLEAN DEFAULT 0,  -- Contains Create Records
+    has_record_deletes BOOLEAN DEFAULT 0,  -- Contains Delete Records
+    last_modified_date DATETIME,           -- When modified in SF
+    synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    xml_parsed_at DATETIME,                -- When we last parsed the XML
+    UNIQUE(flow_api_name, version_number)
+)
+```
+
+**Indexes:**
+- `idx_flow_meta_api_version` on `(flow_api_name, version_number)` - Specific version lookup
+- `idx_flow_meta_trigger_obj` on `trigger_object` - Flows triggered by object
+- `idx_flow_meta_active` on `is_active` - Active flows only
+
+---
+
+#### Table: `sf_automation_coverage`
+**Status:** ✅ Implemented (Phase 3)
+**Purpose:** Summary view of what objects/fields are covered by automations
+
+```sql
+CREATE TABLE IF NOT EXISTS sf_automation_coverage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    connection_alias TEXT NOT NULL,        -- Which org
+    object_name TEXT NOT NULL,             -- Salesforce object
+    field_name TEXT,                       -- Field on object (NULL for object-level)
+    has_flows BOOLEAN DEFAULT 0,           -- Any flows reference this?
+    flow_count INTEGER DEFAULT 0,          -- Number of flows
+    has_triggers BOOLEAN DEFAULT 0,        -- Any triggers reference this?
+    trigger_count INTEGER DEFAULT 0,       -- Number of triggers
+    has_validation_rules BOOLEAN DEFAULT 0,-- Any validation rules?
+    validation_rule_count INTEGER DEFAULT 0,-- Number of validation rules
+    has_process_builders BOOLEAN DEFAULT 0,-- Any process builders?
+    process_builder_count INTEGER DEFAULT 0,-- Number of process builders
+    total_automation_count INTEGER DEFAULT 0,-- Total automations
+    last_computed DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(connection_alias, object_name, field_name)
+)
+```
+
+**Indexes:**
+- `idx_auto_cov_object` on `object_name` - Coverage for an object
+- `idx_auto_cov_field` on `(object_name, field_name)` - Coverage for a field
+
+**Example Queries:**
+```sql
+-- Show me the most automated fields
+SELECT object_name, field_name, total_automation_count
+FROM sf_automation_coverage
+WHERE field_name IS NOT NULL
+ORDER BY total_automation_count DESC
+LIMIT 20;
+```
+
+---
+
+## MCP Integration Design
+
+Phase 3 tables are specifically designed to support Model Context Protocol (MCP) queries for AI-powered analysis:
+
+### Example MCP Queries
+
+**User Query:** "What flows use the Account Email field?"
+```sql
+-- MCP translates to:
+SELECT dependent_name, reference_type, element_type
+FROM sf_field_dependencies d
+JOIN sf_flow_field_references f ON d.dependent_id = f.flow_id
+WHERE d.object_name='Account'
+  AND d.field_name='Email'
+  AND d.dependent_type='flow'
+```
+
+**User Query:** "Show me all automations on Opportunity"
+```sql
+-- MCP translates to:
+SELECT * FROM sf_automation_coverage
+WHERE object_name='Opportunity'
+```
+
+**User Query:** "What objects have master-detail relationships to Account?"
+```sql
+-- MCP translates to:
+SELECT source_object, source_field, is_cascade_delete
+FROM sf_field_relationships
+WHERE target_object='Account'
+  AND relationship_type='master_detail'
+```
+
+---
+
+## Storage Estimates (Updated)
+
+Typical org (~1000 custom objects, ~10000 fields, ~200 flows):
+- Core metadata (objects, fields): ~50 MB
+- Flow metadata and dependencies: ~2 MB
+- Trigger metadata: ~100 KB
+- Field relationships: ~100 KB
+- Automation coverage: ~200 KB
+- **Total Phase 3 overhead:** ~3 MB (negligible)
+
+---
+
+## Performance Optimizations
+
+### Phase 3 Specific Optimizations:
+1. **Denormalized Names**: Store automation names in dependency table for fast lookups without joins
+2. **Composite Indexes**: Multi-column indexes for common query patterns
+3. **Summary Tables**: Pre-computed automation coverage for dashboard queries
+4. **Selective Parsing**: Only parse active flow versions
+5. **Batch Inserts**: Use transactions for bulk dependency insertion
+
+---

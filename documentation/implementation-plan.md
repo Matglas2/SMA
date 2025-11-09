@@ -96,80 +96,157 @@ This document outlines the implementation plan for integrating Salesforce metada
 
 ### Phase 3: Flow & Automation Retrieval (MVP - Step 3)
 **Goal:** Retrieve flows, triggers, and automation metadata
+**Status:** ✅ Completed (2025-11-09)
 
 **Tasks:**
-1. Retrieve Flow definitions via Metadata API
-2. Retrieve Apex Triggers via Tooling API
-3. Parse XML/code to extract field references
-4. Store automations and dependencies in database
-5. Create automation commands:
-   - `sma sf sync-flows` - Sync flow metadata
-   - `sma sf sync-triggers` - Sync trigger metadata
+1. ✅ Retrieve Flow definitions via Tooling API
+2. ✅ Retrieve Apex Triggers via Tooling API
+3. ✅ Parse Flow XML to extract field references
+4. ✅ Store automations and dependencies in database
+5. ✅ Create analyse command group for querying dependencies
 
-**Files to Create/Modify:**
-- `src/sma/salesforce/flows.py` - Flow retrieval and parsing
-- `src/sma/salesforce/triggers.py` - Trigger retrieval
+**Files Created/Modified:**
 - `src/sma/parsers/flow_parser.py` - Parse Flow XML
-- `src/sma/parsers/apex_parser.py` - Parse Apex code
-- `src/sma/database.py` - Add flow/trigger tables
+- `src/sma/salesforce/metadata.py` - Enhanced with Phase 3 sync methods
+- `src/sma/database.py` - Added 7 Phase 3 tables
+- `src/sma/cli.py` - Added `sma sf analyse` command group
 
 **API Calls:**
-- Metadata API: `listMetadata(type='Flow')`
-- Metadata API: `retrieve(Flow definitions)`
-- Tooling API: Query ApexTrigger, ApexClass
+- Tooling API: `query/?q=SELECT ... FROM FlowDefinition`
+- Tooling API: `query/?q=SELECT ... FROM Flow`
+- Tooling API: `query/?q=SELECT ... FROM ApexTrigger`
 
 **Success Criteria:**
-- ✅ Flows stored in database
-- ✅ Triggers stored in database
-- ✅ Field dependencies extracted and stored
-- ✅ XML/code parsing working
+- ✅ Flows stored in database (sf_flow_metadata, sf_flow_field_references)
+- ✅ Triggers stored in database (sf_trigger_metadata)
+- ✅ Field dependencies extracted and stored (sf_field_dependencies)
+- ✅ Flow XML parsing working (FlowParser class)
+- ✅ Field relationships tracked (sf_field_relationships, sf_object_relationships)
+
+**Implemented Commands:**
+- `sma sf analyse field-flows <object> <field>` - Find flows using field
+- `sma sf analyse field-triggers <object> <field>` - Find triggers on object
+- `sma sf analyse field-deps <object> <field>` - All dependencies for field
+- `sma sf analyse flow-fields <flow>` - Find fields used by flow
+- `sma sf analyse object-relationships <object>` - Show relationship graph
 
 ---
 
-### Phase 4: Query Commands (MVP - Step 4)
-**Goal:** Implement query commands to answer troubleshooting questions
+### Phase 4: Shell Autocomplete (MVP - Step 4)
+**Goal:** Add intelligent shell autocomplete for commands and data
+**Status:** 📋 Planned
+
+**Overview:**
+Implement multi-shell autocomplete support using Click 8.x native completion and click-pwsh for PowerShell 7. Autocomplete will be powered by dynamic database queries to suggest object names, field names, flow names, and org aliases while typing.
+
+**Technology Stack:**
+- **Click 8.x** - Native completion for Bash, Zsh, Fish (already available)
+- **click-pwsh** - PowerShell 7+ support (new dependency)
+
+**Supported Shells:**
+- Bash 4.4+ (Linux, Mac, WSL)
+- Zsh (Mac, Linux)
+- Fish (Linux, Mac)
+- PowerShell 7+ (Windows, Mac, Linux)
 
 **Tasks:**
-1. Implement query engine
-2. Create query commands:
-   - `sma query field-triggers <field>` - Find triggers using field
-   - `sma query field-flows <field>` - Find flows using field
-   - `sma query flow-fields <flow>` - Find fields used by flow
-   - `sma query field-automations <field>` - All automations for field
-3. Add output formatting (table, JSON, CSV)
-4. Implement fuzzy search for field/object names
+
+**4.1 Add Dependencies**
+1. Add `click-pwsh>=0.9.5` to requirements.txt and pyproject.toml
+2. Initialize PowerShell completion support in cli.py
+
+**4.2 Create Completion Module**
+Create `src/sma/completion.py` with completion functions:
+1. `complete_salesforce_objects()` - Autocomplete object names from database
+2. `complete_salesforce_fields()` - Autocomplete field names (context-aware)
+3. `complete_flow_names()` - Autocomplete flow names with status
+4. `complete_org_aliases()` - Autocomplete org aliases with type
+
+**4.3 Apply Completion to Commands**
+Add `shell_complete` parameter to:
+- All `analyse` command arguments (object_name, field_name, flow_name)
+- `--alias` options across all commands
+- `sma sf switch` command
+- `sma sf disconnect` command
+
+**4.4 Add Helper Commands**
+Create `sma completion` command group:
+- `sma completion install <shell>` - Install completion for specified shell
+- `sma completion show <shell>` - Display completion script
+
+**4.5 Documentation**
+Create `documentation/features/shell-completion.md` with:
+- Installation instructions for each shell
+- Usage examples
+- Troubleshooting guide
+- Technical implementation details
 
 **Files to Create/Modify:**
-- `src/sma/query/engine.py` - Query logic
-- `src/sma/query/formatters.py` - Output formatting
-- `src/sma/cli.py` - Add query commands
+- `requirements.txt` - Add click-pwsh dependency
+- `pyproject.toml` - Add click-pwsh dependency
+- `src/sma/completion.py` - NEW: Completion functions
+- `src/sma/cli.py` - Initialize PowerShell support, add shell_complete parameters
+- `documentation/features/shell-completion.md` - NEW: Feature documentation
+
+**Database Queries:**
+All completion functions will query local database with:
+- LIMIT 50 for performance
+- Prefix matching with LIKE
+- CompletionItem objects with help text
+- Error handling (return empty list on failure)
+
+**Example Autocomplete Behavior:**
+```bash
+# Object name completion
+sma sf analyse field-flows Acc<TAB>
+→ Account, AccountContactRole, AccountHistory...
+
+# Field name completion (context-aware)
+sma sf analyse field-flows Account Em<TAB>
+→ Email (Text), Employee_Number__c (Number)...
+
+# Flow name completion with status
+sma sf analyse flow-fields Update<TAB>
+→ Update_Account_Flow (Active), Update_Contact_Flow (Inactive)...
+
+# Org alias completion
+sma sf switch prod<TAB>
+→ production (Production), prod-sandbox (Sandbox)...
+```
+
+**Performance Requirements:**
+- Completion queries: < 50ms
+- Results limited to 50 items
+- Database queries use indexes (object_name, field_name, api_name)
+- Optional caching for frequently accessed data
+
+**Windows Considerations:**
+- PowerShell 7+ required (not PowerShell 5.1)
+- cmd.exe not supported natively
+- Installation helper for users: `sma completion install powershell`
 
 **Success Criteria:**
-- ✅ All planned queries working
-- ✅ Fast query response (<1 second)
-- ✅ Multiple output formats
-- ✅ Helpful error messages
+- ✅ Autocomplete works in Bash, Zsh, Fish, PowerShell 7
+- ✅ Object names autocomplete from database
+- ✅ Field names autocomplete (filtered by selected object)
+- ✅ Flow names autocomplete with active/inactive status
+- ✅ Org aliases autocomplete with type info
+- ✅ Help text displayed in supported shells (Zsh, Fish, PowerShell)
+- ✅ Fast response (< 50ms per query)
+- ✅ Easy installation via `sma completion install`
+- ✅ Comprehensive documentation
+
+**Alternative Considered:**
+- **prompt-toolkit** - Requires rewriting CLI to use custom input loop
+- **argcomplete** - Requires argparse instead of Click
+- **Custom PowerShell module** - Too much maintenance overhead
+- **Decision:** Use Click 8.x + click-pwsh for maximum compatibility
 
 ---
 
-### Phase 5: Autocomplete (MVP - Step 5)
-**Goal:** Add autocomplete for object and field names
-
-**Tasks:**
-1. Implement autocomplete using `prompt_toolkit`
-2. Load object/field names from database
-3. Enable fuzzy matching
-4. Add autocomplete to query commands
-
-**Files to Create/Modify:**
-- `src/sma/autocomplete.py` - Autocomplete logic
-- `src/sma/cli.py` - Integrate autocomplete
-
-**Success Criteria:**
-- ✅ Object names autocomplete
-- ✅ Field names autocomplete (filtered by object)
-- ✅ Fuzzy matching works
-- ✅ Fast response
+### Phase 5: Apex Code Analysis (Future)
+**Goal:** Parse Apex code to identify field usage at code level
+**Status:** 📋 Planned (post-MVP)
 
 ---
 

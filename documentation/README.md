@@ -30,6 +30,9 @@ All features must be documented in this folder with the following information:
 ### MVP Phase 2: Metadata Retrieval
 4. [Metadata Synchronization](features/metadata-sync.md) - Download and cache Salesforce object and field metadata
 
+### MVP Phase 3: Dependency Tracking & Analysis
+5. [Analyse Commands](features/analyse-commands.md) - Query field dependencies, Flow usage, and object relationships
+
 ## Planned Features (MVP)
 
 See [requirements.md](requirements.md) for the complete list of planned Salesforce integration features.
