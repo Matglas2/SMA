@@ -22,8 +22,9 @@ All features must be documented in this folder with the following information:
 ### Phase 0: Demo Features
 1. [Hello Command](features/hello-command.md) - Greet users with inspirational quotes and ASCII art
 
-### MVP Phase 1: Authentication
+### MVP Phase 1: Authentication & Tools
 2. [Salesforce Authentication](features/salesforce-authentication.md) - OAuth 2.0 connection to Salesforce orgs
+3. [Database Browser](features/database-browser.md) - Interactive web-based database explorer
 
 ## Planned Features (MVP)
 

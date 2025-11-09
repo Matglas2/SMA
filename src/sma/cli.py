@@ -3,7 +3,10 @@
 import click
 import random
 import os
+import subprocess
+import webbrowser
 from datetime import datetime
+from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from .database import Database
@@ -316,6 +319,144 @@ def sf_disconnect(alias):
     except Exception as e:
         console.print(f"\n[bold red]✗ Error:[/bold red] {str(e)}\n")
         raise click.Abort()
+
+
+# Database commands group
+@main.group(name='db')
+def database():
+    """Database management commands."""
+    pass
+
+
+@database.command(name='browse')
+@click.option('--port', default=8001, help='Port for datasette server (default: 8001)')
+@click.option('--no-browser', is_flag=True, help='Do not open browser automatically')
+def db_browse(port, no_browser):
+    """Open interactive database browser in web browser.
+
+    Uses datasette to provide a beautiful web interface for exploring
+    the SMA database. You can browse tables, run SQL queries, and
+    export data.
+
+    Example:
+        sma db browse
+        sma db browse --port 8080
+        sma db browse --no-browser
+    """
+    try:
+        db_path = Path.home() / ".sma" / "sma.db"
+
+        if not db_path.exists():
+            console.print("\n[yellow]Database not found.[/yellow]")
+            console.print("The database will be created when you run your first command.\n")
+            return
+
+        console.print(f"\n[bold cyan]Starting database browser...[/bold cyan]\n")
+        console.print(f"Database: [cyan]{db_path}[/cyan]")
+        console.print(f"Port: [cyan]{port}[/cyan]")
+        console.print(f"\nPress [bold]Ctrl+C[/bold] to stop the server.\n")
+
+        # Build datasette command
+        cmd = ['datasette', str(db_path), '--port', str(port)]
+
+        if not no_browser:
+            cmd.append('--open')
+
+        # Run datasette
+        try:
+            subprocess.run(cmd, check=True)
+        except KeyboardInterrupt:
+            console.print("\n\n[green]Database browser stopped.[/green]\n")
+        except FileNotFoundError:
+            console.print("\n[bold red]Error:[/bold red] datasette is not installed.\n")
+            console.print("Install it with: [cyan]pip install datasette[/cyan]\n")
+            raise click.Abort()
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@database.command(name='stats')
+def db_stats():
+    """Show database statistics.
+
+    Displays information about the SMA database including:
+    - Database location and size
+    - Number of tables
+    - Record counts per table
+    """
+    try:
+        db_path = Path.home() / ".sma" / "sma.db"
+
+        if not db_path.exists():
+            console.print("\n[yellow]Database not found.[/yellow]")
+            console.print("The database will be created when you run your first command.\n")
+            return
+
+        # Get file size
+        size_bytes = db_path.stat().st_size
+        size_mb = size_bytes / (1024 * 1024)
+
+        console.print(f"\n[bold cyan]Database Statistics[/bold cyan]\n")
+        console.print(f"Location: [cyan]{db_path}[/cyan]")
+        console.print(f"Size: [cyan]{size_mb:.2f} MB[/cyan] ({size_bytes:,} bytes)\n")
+
+        # Get table statistics
+        with Database() as db:
+            cursor = db.conn.cursor()
+
+            # Get all tables
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+            """)
+            tables = [row['name'] for row in cursor.fetchall()]
+
+            if not tables:
+                console.print("[yellow]No tables found.[/yellow]\n")
+                return
+
+            # Create table for stats
+            stats_table = Table(title="Table Statistics", show_header=True, header_style="bold cyan")
+            stats_table.add_column("Table Name", style="cyan")
+            stats_table.add_column("Row Count", justify="right", style="green")
+
+            total_rows = 0
+            for table_name in tables:
+                cursor.execute(f"SELECT COUNT(*) as count FROM {table_name}")
+                count = cursor.fetchone()['count']
+                total_rows += count
+                stats_table.add_row(table_name, f"{count:,}")
+
+            console.print(stats_table)
+            console.print(f"\n[bold]Total Tables:[/bold] [cyan]{len(tables)}[/cyan]")
+            console.print(f"[bold]Total Records:[/bold] [cyan]{total_rows:,}[/cyan]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@database.command(name='path')
+def db_path():
+    """Show database file path.
+
+    Displays the full path to the SMA database file.
+    Useful for opening the database in external tools.
+    """
+    db_path = Path.home() / ".sma" / "sma.db"
+
+    console.print(f"\n[bold cyan]Database Path:[/bold cyan]\n")
+    console.print(f"[cyan]{db_path}[/cyan]\n")
+
+    if db_path.exists():
+        size_bytes = db_path.stat().st_size
+        size_mb = size_bytes / (1024 * 1024)
+        console.print(f"Size: [green]{size_mb:.2f} MB[/green]\n")
+    else:
+        console.print("[yellow]Database does not exist yet.[/yellow]\n")
 
 
 if __name__ == '__main__':
