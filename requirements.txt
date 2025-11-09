@@ -1,6 +1,5 @@
 # CLI Framework
 click>=8.0.0
-click-pwsh>=0.9.5
 
 # Salesforce Integration
 simple-salesforce>=1.12.0
