@@ -1,6 +1,7 @@
 """Salesforce metadata synchronization module."""
 
 import json
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import quote
@@ -464,6 +465,55 @@ class MetadataSync:
             console.print(f"[yellow]⚠[/yellow] Error getting metadata for flow {flow_id}: {e}")
             return None
 
+    def _dict_to_flow_xml(self, metadata_dict: Dict) -> str:
+        """Convert Salesforce Flow metadata dictionary to XML string.
+
+        Args:
+            metadata_dict: Flow metadata as dictionary from Tooling API
+
+        Returns:
+            XML string representation of the Flow
+        """
+        # Flow namespace
+        ns = 'http://soap.sforce.com/2006/04/metadata'
+        ET.register_namespace('', ns)
+
+        # Create root element
+        root = ET.Element(f'{{{ns}}}Flow')
+
+        # Recursively build XML from dictionary
+        self._dict_to_xml_recursive(metadata_dict, root, ns)
+
+        # Convert to string
+        return ET.tostring(root, encoding='unicode')
+
+    def _dict_to_xml_recursive(self, data: any, parent: ET.Element, ns: str):
+        """Recursively convert dictionary to XML elements.
+
+        Args:
+            data: Dictionary, list, or value to convert
+            parent: Parent XML element
+            ns: XML namespace
+        """
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, list):
+                    # Create multiple child elements for lists
+                    for item in value:
+                        child = ET.SubElement(parent, f'{{{ns}}}{key}')
+                        self._dict_to_xml_recursive(item, child, ns)
+                elif isinstance(value, dict):
+                    # Create child element and recurse
+                    child = ET.SubElement(parent, f'{{{ns}}}{key}')
+                    self._dict_to_xml_recursive(value, child, ns)
+                elif value is not None:
+                    # Create child element with text value
+                    child = ET.SubElement(parent, f'{{{ns}}}{key}')
+                    child.text = str(value)
+        elif data is not None:
+            # Set text directly if not a dict
+            parent.text = str(data)
+
     def _process_flow(self, flow: Dict):
         """Process a flow and extract dependencies.
 
@@ -486,11 +536,20 @@ class MetadataSync:
         version_number = flow.get('VersionNumber', 1)
         status = flow.get('Status', 'Active')
 
-        # Parse Flow XML if available
-        metadata_xml = flow.get('Metadata')
-        if not metadata_xml:
-            console.print(f"[yellow]⚠[/yellow] Skipping flow {flow_api_name}: No metadata XML")
+        # Get Flow Metadata (returned as dict from Tooling API)
+        metadata_obj = flow.get('Metadata')
+        if not metadata_obj:
+            console.print(f"[yellow]⚠[/yellow] Skipping flow {flow_api_name}: No metadata")
             return
+
+        # Convert metadata dict to XML string if needed
+        if isinstance(metadata_obj, dict):
+            # Salesforce Tooling API returns Metadata as a parsed dictionary
+            # We need to convert it to XML for the parser
+            metadata_xml = self._dict_to_flow_xml(metadata_obj)
+        else:
+            # Already a string
+            metadata_xml = metadata_obj
 
         # Parse the Flow XML
         parsed = self.flow_parser.parse_flow_xml(metadata_xml)
