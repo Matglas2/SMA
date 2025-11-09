@@ -413,7 +413,7 @@ class MetadataSync:
         try:
             # Query for Flow definitions using Tooling API
             query = """
-                SELECT Id, ApiName, Label, ProcessType, ActiveVersionId, LatestVersionId, Description
+                SELECT Id, DeveloperName, MasterLabel, ProcessType, ActiveVersionId, LatestVersionId, Description
                 FROM FlowDefinition
                 WHERE IsActive = true
             """
@@ -467,7 +467,7 @@ class MetadataSync:
         cursor = self.conn.cursor()
 
         flow_id = flow_version['Id']
-        flow_api_name = flow_def['ApiName']
+        flow_api_name = flow_def['DeveloperName']
         version_number = flow_version.get('VersionNumber', 1)
 
         # Parse Flow XML if available
@@ -495,7 +495,7 @@ class MetadataSync:
              synced_at, xml_parsed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            flow_id, flow_api_name, flow_def.get('Label'), flow_def.get('ProcessType'),
+            flow_id, flow_api_name, flow_def.get('MasterLabel'), flow_def.get('ProcessType'),
             metadata.get('trigger_type'), metadata.get('trigger_object'),
             metadata.get('is_active', False), version_number, metadata.get('status'),
             element_counts.get('total_elements', 0), element_counts.get('decisions', 0),
@@ -638,7 +638,8 @@ class MetadataSync:
 
                 # Determine relationship type
                 field_type = field['type']
-                metadata = json.loads(field.get('metadata', '{}'))
+                metadata_str = field['metadata'] if field['metadata'] else '{}'
+                metadata = json.loads(metadata_str)
 
                 is_master_detail = (field_type == 'MasterDetail')
                 is_lookup = (field_type == 'Lookup')
