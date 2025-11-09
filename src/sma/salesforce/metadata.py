@@ -413,8 +413,9 @@ class MetadataSync:
 
         try:
             # Query for Flow definitions using Tooling API
+            # Note: ProcessType is not available on FlowDefinition, it comes from Flow metadata
             query = """
-                SELECT Id, DeveloperName, MasterLabel, ProcessType, ActiveVersionId, LatestVersionId, Description
+                SELECT Id, DeveloperName, MasterLabel, ActiveVersionId, LatestVersionId, Description
                 FROM FlowDefinition
                 WHERE IsActive = true
             """
@@ -539,7 +540,7 @@ class MetadataSync:
              synced_at, xml_parsed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            flow_id, flow_api_name, flow_def.get('MasterLabel'), flow_def.get('ProcessType'),
+            flow_id, flow_api_name, flow_def.get('MasterLabel'), metadata.get('process_type'),
             metadata.get('trigger_type'), metadata.get('trigger_object'),
             metadata.get('is_active', False), version_number, metadata.get('status'),
             element_counts.get('total_elements', 0), element_counts.get('decisions', 0),
