@@ -356,7 +356,7 @@ def sf_sync(objects_only):
                 return
 
             # Create metadata sync instance
-            metadata_sync = MetadataSync(sf_client, db.conn, status['org_id'])
+            metadata_sync = MetadataSync(sf_client, db.conn, status['org_id'], status['org_name'])
 
             if objects_only:
                 console.print("\n[bold cyan]Syncing objects only...[/bold cyan]\n")
@@ -364,17 +364,650 @@ def sf_sync(objects_only):
                 console.print(f"\n[bold green]✓ Synced {count} objects![/bold green]\n")
             else:
                 # Sync all metadata
+                console.print("\n[bold cyan]Starting metadata sync...[/bold cyan]\n")
                 result = metadata_sync.sync_all()
 
                 # Show summary
                 console.print("\n[bold cyan]Sync Summary[/bold cyan]\n")
-                console.print(f"Objects synced: [green]{result['objects']}[/green]")
-                console.print(f"Fields synced:  [green]{result['fields']}[/green]")
-                console.print(f"\nYou can now query metadata using future commands or browse the database:\n")
+
+                # Phase 2 results
+                console.print("[bold]Phase 2: Basic Metadata[/bold]")
+                console.print(f"  Objects synced: [green]{result.get('objects', 0)}[/green]")
+                console.print(f"  Fields synced:  [green]{result.get('fields', 0)}[/green]")
+
+                # Phase 3 results
+                console.print("\n[bold]Phase 3: Dependencies & Relationships[/bold]")
+                console.print(f"  Flows synced:         [green]{result.get('flows', 0)}[/green]")
+                console.print(f"  Triggers synced:      [green]{result.get('triggers', 0)}[/green]")
+                console.print(f"  Relationships synced: [green]{result.get('relationships', 0)}[/green]")
+
+                console.print(f"\nYou can now analyse metadata using the analyse commands:\n")
+                console.print(f"  [cyan]sma sf analyse field-flows Account Email[/cyan]")
+                console.print(f"  [cyan]sma sf analyse field-deps Contact Phone[/cyan]")
+                console.print(f"  [cyan]sma sf analyse object-relationships Account[/cyan]")
+                console.print(f"\nOr browse the database:\n")
                 console.print(f"  [cyan]sma db browse[/cyan]\n")
 
     except Exception as e:
         console.print(f"\n[bold red]✗ Sync failed:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
+@salesforce.group(name='analyse')
+def sf_analyse():
+    """Analyse Salesforce metadata dependencies and relationships.
+
+    Query the local database to understand field usage, automation coverage,
+    and relationship mappings. Run 'sma sf sync' first to populate the database.
+    """
+    pass
+
+
+@sf_analyse.command(name='field-flows')
+@click.argument('object_name')
+@click.argument('field_name')
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
+def analyse_field_flows(object_name, field_name, alias, format):
+    """Show which flows use a specific field.
+
+    Example:
+        sma sf analyse field-flows Account Email
+        sma sf analyse field-flows Opportunity StageName --alias production
+        sma sf analyse field-flows Contact Phone --format json
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            # Determine which org to query
+            if alias is None:
+                status = conn_manager.get_status()
+                if status is None:
+                    console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                    console.print("Run [cyan]sma sf connect[/cyan] first or specify --alias.\n")
+                    return
+                alias = status['org_name']
+
+            # Query field-flow dependencies
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT
+                    d.dependent_name as flow_name,
+                    d.reference_type,
+                    f.element_name,
+                    f.element_type,
+                    f.is_input,
+                    f.is_output,
+                    f.variable_name,
+                    fm.process_type,
+                    fm.trigger_type,
+                    fm.is_active
+                FROM sf_field_dependencies d
+                LEFT JOIN sf_flow_field_references f
+                    ON d.dependent_id = f.flow_id
+                    AND f.object_name = d.object_name
+                    AND f.field_name = d.field_name
+                LEFT JOIN sf_flow_metadata fm
+                    ON d.dependent_id = fm.flow_id
+                WHERE d.connection_alias = ?
+                  AND d.object_name = ?
+                  AND d.field_name = ?
+                  AND d.dependent_type = 'flow'
+                ORDER BY d.dependent_name, f.element_name
+            """, (alias, object_name, field_name))
+
+            results = cursor.fetchall()
+
+            if not results:
+                console.print(f"\n[yellow]No flows found using {object_name}.{field_name}[/yellow]\n")
+                return
+
+            if format == 'json':
+                import json
+                output = []
+                for row in results:
+                    output.append({
+                        'flow_name': row['flow_name'],
+                        'reference_type': row['reference_type'],
+                        'element_name': row['element_name'],
+                        'element_type': row['element_type'],
+                        'is_input': bool(row['is_input']),
+                        'is_output': bool(row['is_output']),
+                        'variable_name': row['variable_name'],
+                        'process_type': row['process_type'],
+                        'trigger_type': row['trigger_type'],
+                        'is_active': bool(row['is_active'])
+                    })
+                console.print(json.dumps(output, indent=2))
+            else:
+                # Table format
+                table = Table(
+                    title=f"Flows Using {object_name}.{field_name}",
+                    show_header=True,
+                    header_style="bold cyan"
+                )
+                table.add_column("Flow Name", style="cyan")
+                table.add_column("Element", style="yellow")
+                table.add_column("Element Type")
+                table.add_column("Usage")
+                table.add_column("Status", style="green")
+
+                for row in results:
+                    usage_parts = []
+                    if row['is_input']:
+                        usage_parts.append("Read")
+                    if row['is_output']:
+                        usage_parts.append("Write")
+                    usage = ", ".join(usage_parts) if usage_parts else row['reference_type'] or "Unknown"
+
+                    status = "Active" if row['is_active'] else "Inactive"
+
+                    table.add_row(
+                        row['flow_name'] or "Unknown",
+                        row['element_name'] or "-",
+                        row['element_type'] or "-",
+                        usage,
+                        status
+                    )
+
+                console.print()
+                console.print(table)
+                console.print(f"\n[bold]Total:[/bold] [cyan]{len(results)}[/cyan] flow element(s)\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
+@sf_analyse.command(name='field-triggers')
+@click.argument('object_name')
+@click.argument('field_name')
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
+def analyse_field_triggers(object_name, field_name, alias, format):
+    """Show which triggers reference a specific field.
+
+    Note: This shows triggers on the object. Full Apex code parsing
+    for field-level usage will be added in a future phase.
+
+    Example:
+        sma sf analyse field-triggers Account Email
+        sma sf analyse field-triggers Opportunity Amount --format json
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            # Determine which org to query
+            if alias is None:
+                status = conn_manager.get_status()
+                if status is None:
+                    console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                    console.print("Run [cyan]sma sf connect[/cyan] first or specify --alias.\n")
+                    return
+                alias = status['org_name']
+
+            # Query trigger metadata for the object
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT
+                    trigger_name,
+                    is_before_insert,
+                    is_before_update,
+                    is_before_delete,
+                    is_after_insert,
+                    is_after_update,
+                    is_after_delete,
+                    is_after_undelete,
+                    is_active,
+                    last_modified_date
+                FROM sf_trigger_metadata
+                WHERE object_name = ?
+                  AND is_active = 1
+                ORDER BY trigger_name
+            """, (object_name,))
+
+            results = cursor.fetchall()
+
+            if not results:
+                console.print(f"\n[yellow]No active triggers found on {object_name}[/yellow]\n")
+                console.print("Note: Field-level trigger analysis requires Apex code parsing (future phase).\n")
+                return
+
+            if format == 'json':
+                import json
+                output = []
+                for row in results:
+                    events = []
+                    if row['is_before_insert']: events.append('before insert')
+                    if row['is_before_update']: events.append('before update')
+                    if row['is_before_delete']: events.append('before delete')
+                    if row['is_after_insert']: events.append('after insert')
+                    if row['is_after_update']: events.append('after update')
+                    if row['is_after_delete']: events.append('after delete')
+                    if row['is_after_undelete']: events.append('after undelete')
+
+                    output.append({
+                        'trigger_name': row['trigger_name'],
+                        'events': events,
+                        'is_active': bool(row['is_active']),
+                        'last_modified': row['last_modified_date']
+                    })
+                console.print(json.dumps(output, indent=2))
+            else:
+                # Table format
+                table = Table(
+                    title=f"Triggers on {object_name}",
+                    show_header=True,
+                    header_style="bold cyan"
+                )
+                table.add_column("Trigger Name", style="cyan")
+                table.add_column("Events", style="yellow")
+                table.add_column("Last Modified")
+
+                for row in results:
+                    events = []
+                    if row['is_before_insert']: events.append('BI')
+                    if row['is_before_update']: events.append('BU')
+                    if row['is_before_delete']: events.append('BD')
+                    if row['is_after_insert']: events.append('AI')
+                    if row['is_after_update']: events.append('AU')
+                    if row['is_after_delete']: events.append('AD')
+                    if row['is_after_undelete']: events.append('AUD')
+
+                    events_str = ", ".join(events) if events else "None"
+
+                    table.add_row(
+                        row['trigger_name'],
+                        events_str,
+                        row['last_modified_date'] or "Unknown"
+                    )
+
+                console.print()
+                console.print(table)
+                console.print(f"\n[bold]Total:[/bold] [cyan]{len(results)}[/cyan] active trigger(s)\n")
+                console.print("[dim]Note: Field-level usage requires Apex parsing (future phase)[/dim]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
+@sf_analyse.command(name='field-deps')
+@click.argument('object_name')
+@click.argument('field_name')
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
+def analyse_field_deps(object_name, field_name, alias, format):
+    """Show all dependencies for a specific field.
+
+    Displays flows, triggers, and other automation that reference this field.
+
+    Example:
+        sma sf analyse field-deps Account Email
+        sma sf analyse field-deps Contact Phone --format json
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            # Determine which org to query
+            if alias is None:
+                status = conn_manager.get_status()
+                if status is None:
+                    console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                    console.print("Run [cyan]sma sf connect[/cyan] first or specify --alias.\n")
+                    return
+                alias = status['org_name']
+
+            # Query all dependencies
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT
+                    dependent_type,
+                    dependent_name,
+                    reference_type,
+                    line_number,
+                    last_verified
+                FROM sf_field_dependencies
+                WHERE connection_alias = ?
+                  AND object_name = ?
+                  AND field_name = ?
+                ORDER BY dependent_type, dependent_name
+            """, (alias, object_name, field_name))
+
+            results = cursor.fetchall()
+
+            if not results:
+                console.print(f"\n[yellow]No dependencies found for {object_name}.{field_name}[/yellow]\n")
+                console.print("This field may not be used in any tracked automation.\n")
+                return
+
+            if format == 'json':
+                import json
+                output = []
+                for row in results:
+                    output.append({
+                        'type': row['dependent_type'],
+                        'name': row['dependent_name'],
+                        'reference_type': row['reference_type'],
+                        'line_number': row['line_number'],
+                        'last_verified': row['last_verified']
+                    })
+                console.print(json.dumps(output, indent=2))
+            else:
+                # Table format
+                table = Table(
+                    title=f"Dependencies for {object_name}.{field_name}",
+                    show_header=True,
+                    header_style="bold cyan"
+                )
+                table.add_column("Type", style="cyan")
+                table.add_column("Name", style="yellow")
+                table.add_column("Reference Type")
+                table.add_column("Last Verified")
+
+                # Group by type
+                type_counts = {}
+                for row in results:
+                    dep_type = row['dependent_type']
+                    type_counts[dep_type] = type_counts.get(dep_type, 0) + 1
+
+                    table.add_row(
+                        dep_type,
+                        row['dependent_name'] or "Unknown",
+                        row['reference_type'] or "-",
+                        row['last_verified'] or "Unknown"
+                    )
+
+                console.print()
+                console.print(table)
+                console.print(f"\n[bold]Summary:[/bold]")
+                for dep_type, count in sorted(type_counts.items()):
+                    console.print(f"  {dep_type}: [cyan]{count}[/cyan]")
+                console.print()
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
+@sf_analyse.command(name='flow-fields')
+@click.argument('flow_name')
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
+def analyse_flow_fields(flow_name, alias, format):
+    """Show all fields used by a specific flow.
+
+    Example:
+        sma sf analyse flow-fields "Account Update Flow"
+        sma sf analyse flow-fields MyFlow --format json
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            # Determine which org to query
+            if alias is None:
+                status = conn_manager.get_status()
+                if status is None:
+                    console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                    console.print("Run [cyan]sma sf connect[/cyan] first or specify --alias.\n")
+                    return
+                alias = status['org_name']
+
+            # Query flow field references
+            cursor = db.conn.cursor()
+            cursor.execute("""
+                SELECT
+                    f.object_name,
+                    f.field_name,
+                    f.element_name,
+                    f.element_type,
+                    f.is_input,
+                    f.is_output,
+                    f.variable_name
+                FROM sf_flow_field_references f
+                JOIN sf_flow_metadata fm ON f.flow_id = fm.flow_id
+                WHERE fm.flow_api_name LIKE ? OR fm.flow_label LIKE ?
+                ORDER BY f.object_name, f.field_name, f.element_name
+            """, (f"%{flow_name}%", f"%{flow_name}%"))
+
+            results = cursor.fetchall()
+
+            if not results:
+                console.print(f"\n[yellow]No field references found for flow matching '{flow_name}'[/yellow]\n")
+                console.print("The flow may not exist, or hasn't been synced yet.\n")
+                return
+
+            if format == 'json':
+                import json
+                output = []
+                for row in results:
+                    output.append({
+                        'object': row['object_name'],
+                        'field': row['field_name'],
+                        'element_name': row['element_name'],
+                        'element_type': row['element_type'],
+                        'is_input': bool(row['is_input']),
+                        'is_output': bool(row['is_output']),
+                        'variable_name': row['variable_name']
+                    })
+                console.print(json.dumps(output, indent=2))
+            else:
+                # Table format
+                table = Table(
+                    title=f"Fields Used in Flow: {flow_name}",
+                    show_header=True,
+                    header_style="bold cyan"
+                )
+                table.add_column("Object.Field", style="cyan")
+                table.add_column("Element", style="yellow")
+                table.add_column("Element Type")
+                table.add_column("Usage")
+                table.add_column("Variable")
+
+                for row in results:
+                    usage_parts = []
+                    if row['is_input']:
+                        usage_parts.append("Read")
+                    if row['is_output']:
+                        usage_parts.append("Write")
+                    usage = ", ".join(usage_parts) if usage_parts else "-"
+
+                    table.add_row(
+                        f"{row['object_name']}.{row['field_name']}",
+                        row['element_name'] or "-",
+                        row['element_type'] or "-",
+                        usage,
+                        row['variable_name'] or "-"
+                    )
+
+                console.print()
+                console.print(table)
+                console.print(f"\n[bold]Total:[/bold] [cyan]{len(results)}[/cyan] field reference(s)\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
+@sf_analyse.command(name='object-relationships')
+@click.argument('object_name')
+@click.option('--alias', default=None, help='Salesforce org alias (uses active org if not specified)')
+@click.option('--direction', type=click.Choice(['all', 'parent', 'child'], case_sensitive=False), default='all', help='Relationship direction to show')
+@click.option('--format', type=click.Choice(['table', 'json'], case_sensitive=False), default='table', help='Output format')
+def analyse_object_relationships(object_name, alias, direction, format):
+    """Show relationship graph for a Salesforce object.
+
+    Displays lookup, master-detail, and other relationships.
+
+    Example:
+        sma sf analyse object-relationships Account
+        sma sf analyse object-relationships Contact --direction parent
+        sma sf analyse object-relationships Opportunity --format json
+    """
+    try:
+        with Database() as db:
+            conn_manager = SalesforceConnection(db)
+
+            # Determine which org to query
+            if alias is None:
+                status = conn_manager.get_status()
+                if status is None:
+                    console.print("\n[yellow]No active Salesforce connection.[/yellow]")
+                    console.print("Run [cyan]sma sf connect[/cyan] first or specify --alias.\n")
+                    return
+                alias = status['org_name']
+
+            # Build query based on direction
+            if direction == 'parent':
+                # This object is the child, show parent relationships
+                query = """
+                    SELECT
+                        source_field,
+                        relationship_type,
+                        target_object,
+                        target_field,
+                        relationship_name,
+                        is_cascade_delete,
+                        is_reparentable
+                    FROM sf_field_relationships
+                    WHERE connection_alias = ?
+                      AND source_object = ?
+                      AND target_object IS NOT NULL
+                    ORDER BY relationship_type, source_field
+                """
+                params = (alias, object_name)
+            elif direction == 'child':
+                # This object is the parent, show child relationships
+                query = """
+                    SELECT
+                        child_object,
+                        relationship_field,
+                        relationship_type,
+                        relationship_name,
+                        child_count_estimate
+                    FROM sf_object_relationships
+                    WHERE connection_alias = ?
+                      AND parent_object = ?
+                    ORDER BY relationship_type, child_object
+                """
+                params = (alias, object_name)
+            else:
+                # Show both directions
+                # We'll run two queries and combine results
+                pass
+
+            cursor = db.conn.cursor()
+
+            if direction in ['parent', 'all']:
+                # Query parent relationships
+                cursor.execute("""
+                    SELECT
+                        'parent' as direction,
+                        source_field as field,
+                        relationship_type,
+                        target_object as related_object,
+                        relationship_name,
+                        is_cascade_delete,
+                        is_reparentable
+                    FROM sf_field_relationships
+                    WHERE connection_alias = ?
+                      AND source_object = ?
+                      AND target_object IS NOT NULL
+                    ORDER BY relationship_type, source_field
+                """, (alias, object_name))
+
+                parent_results = cursor.fetchall()
+            else:
+                parent_results = []
+
+            if direction in ['child', 'all']:
+                # Query child relationships
+                cursor.execute("""
+                    SELECT
+                        'child' as direction,
+                        relationship_field as field,
+                        relationship_type,
+                        child_object as related_object,
+                        relationship_name,
+                        0 as is_cascade_delete,
+                        1 as is_reparentable
+                    FROM sf_object_relationships
+                    WHERE connection_alias = ?
+                      AND parent_object = ?
+                    ORDER BY relationship_type, child_object
+                """, (alias, object_name))
+
+                child_results = cursor.fetchall()
+            else:
+                child_results = []
+
+            results = list(parent_results) + list(child_results)
+
+            if not results:
+                console.print(f"\n[yellow]No relationships found for {object_name}[/yellow]\n")
+                return
+
+            if format == 'json':
+                import json
+                output = []
+                for row in results:
+                    output.append({
+                        'direction': row['direction'],
+                        'field': row['field'],
+                        'type': row['relationship_type'],
+                        'related_object': row['related_object'],
+                        'relationship_name': row['relationship_name'],
+                        'cascade_delete': bool(row['is_cascade_delete']),
+                        'reparentable': bool(row['is_reparentable'])
+                    })
+                console.print(json.dumps(output, indent=2))
+            else:
+                # Table format
+                table = Table(
+                    title=f"Relationships for {object_name}",
+                    show_header=True,
+                    header_style="bold cyan"
+                )
+                table.add_column("Direction", style="magenta")
+                table.add_column("Field", style="cyan")
+                table.add_column("Type", style="yellow")
+                table.add_column("Related Object", style="green")
+                table.add_column("Relationship Name")
+                table.add_column("Cascade Delete")
+
+                for row in results:
+                    direction_icon = "⬆" if row['direction'] == 'parent' else "⬇"
+                    cascade = "Yes" if row['is_cascade_delete'] else "No"
+
+                    table.add_row(
+                        f"{direction_icon} {row['direction'].title()}",
+                        row['field'],
+                        row['relationship_type'] or "Unknown",
+                        row['related_object'],
+                        row['relationship_name'] or "-",
+                        cascade
+                    )
+
+                console.print()
+                console.print(table)
+                console.print(f"\n[bold]Total:[/bold] [cyan]{len(results)}[/cyan] relationship(s)\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
         import traceback
         traceback.print_exc()
         raise click.Abort()

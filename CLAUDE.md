@@ -10,7 +10,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Save time during Salesforce troubleshooting by providing quick answers to metadata and dependency questions that normally require manual exploration through the Salesforce UI or metadata files.
 
 ### Current Status
-Phase 0: Basic CLI prototype with demo features (hello command, quote database). The Salesforce integration features are planned for the MVP phase.
+**Phase 3 Complete**: Dependency tracking and analysis commands are now fully implemented. The tool can:
+- Connect to Salesforce orgs via OAuth (with PKCE)
+- Sync metadata including objects, fields, Flows, and Triggers
+- Parse Flow XML to extract field references
+- Track field relationships (lookups, master-detail)
+- Query field dependencies using the `analyse` command group
+- Browse all data using web-based database interface
+
+**Latest Features:**
+- `sma sf analyse field-flows` - Show which Flows use a specific field
+- `sma sf analyse field-triggers` - Show Triggers on an object
+- `sma sf analyse field-deps` - Show all dependencies for a field
+- `sma sf analyse flow-fields` - Show all fields used by a Flow
+- `sma sf analyse object-relationships` - Display relationship graph
 
 See [requirements.md](documentation/requirements.md) for complete feature roadmap and evolution timeline.
 
@@ -18,16 +31,32 @@ See [requirements.md](documentation/requirements.md) for complete feature roadma
 
 ```
 SMA/
-├── src/sma/              # Main application package
-│   ├── __init__.py       # Package initialization
-│   ├── cli.py            # CLI commands using Click framework
-│   └── database.py       # SQLite database management
-├── documentation/        # Feature documentation (CRITICAL - see below)
-│   ├── README.md         # Documentation index
-│   ├── setup.md          # Installation and setup guide
-│   └── features/         # Individual feature documentation
-├── pyproject.toml        # Project metadata and dependencies
-└── requirements.txt      # Python dependencies
+├── src/sma/                    # Main application package
+│   ├── __init__.py             # Package initialization
+│   ├── cli.py                  # CLI commands using Click framework
+│   ├── database.py             # SQLite database management
+│   ├── parsers/                # Metadata parsers
+│   │   ├── __init__.py         # Package initialization
+│   │   └── flow_parser.py      # Flow XML parser for field extraction
+│   └── salesforce/             # Salesforce integration modules
+│       ├── __init__.py         # Package initialization
+│       ├── auth.py             # OAuth authentication with PKCE
+│       ├── connection.py       # Connection and credential management
+│       └── metadata.py         # Metadata retrieval and sync
+├── documentation/              # Feature documentation (CRITICAL - see below)
+│   ├── README.md               # Documentation index
+│   ├── setup.md                # Installation and setup guide
+│   ├── requirements.md         # Product requirements and roadmap
+│   ├── database-design.md      # Database schema documentation
+│   ├── implementation-plan.md  # Implementation phases and status
+│   └── features/               # Individual feature documentation
+│       ├── hello-command.md
+│       ├── salesforce-authentication.md
+│       ├── metadata-sync.md
+│       ├── database-browser.md
+│       └── analyse-commands.md
+├── pyproject.toml              # Project metadata and dependencies
+└── requirements.txt            # Python dependencies
 ```
 
 ## Development Setup
@@ -52,9 +81,23 @@ pip install -e .
 # Show all commands
 sma --help
 
-# Run specific command
+# Demo commands
 sma hello
 sma hello --name "YourName"
+
+# Salesforce commands
+sma sf connect --alias myorg --client-id <CLIENT_ID> --client-secret <CLIENT_SECRET>
+sma sf list
+sma sf sync
+
+# Analysis commands (Phase 3)
+sma sf analyse field-flows Account Email
+sma sf analyse field-deps Contact Phone
+sma sf analyse flow-fields "My Flow Name"
+sma sf analyse object-relationships Account
+
+# Database browser
+sma db browse
 ```
 
 ## Development Workflow
@@ -108,10 +151,21 @@ This workflow ensures:
 
 ### Current Schema
 
-- `greetings` table: Tracks hello command usage with timestamps and usernames (demo feature)
-- `quotes` table: Stores inspirational quotes with text, author, and timestamp (demo feature)
+**Demo Features:**
+- `greetings` table: Tracks hello command usage with timestamps and usernames
+- `quotes` table: Stores inspirational quotes with text, author, and timestamp
 
-For planned Salesforce metadata schema, see [database-design.md](documentation/database-design.md)
+**Salesforce Integration:**
+- `sf_connections` table: Stores connected org information and metadata
+- `sf_custom_objects` table: Salesforce custom and standard objects
+- `sf_custom_fields` table: Custom fields with metadata
+- `sf_flows` table: Flow definitions and versions
+- `sf_process_builders` table: Process Builder metadata
+- `sf_validation_rules` table: Validation rules
+- `sf_apex_classes` table: Apex class definitions
+- `sf_apex_triggers` table: Apex trigger definitions
+
+For complete schema details, see [database-design.md](documentation/database-design.md)
 
 ## CLI Framework
 
@@ -180,19 +234,50 @@ Each feature document should include:
 ### Phase 0: Demo Features (✅ Implemented)
 
 1. **hello command** (`sma hello`): Greets users with personalized messages, random inspiring quotes from database, and ASCII art. Logs greetings to database.
-   - See: `documentation/features/hello-command.md`
+   - See: [hello-command.md](documentation/features/hello-command.md)
 
-### MVP: Salesforce Integration (📋 Planned)
+### Phase 1: Salesforce OAuth Authentication (✅ Implemented)
 
-The following features are planned for the MVP release:
-- OAuth authentication with Salesforce
-- Real-time metadata retrieval and local caching
-- Field/object/flow dependency queries
+**Commands:**
+- `sma sf connect` - Authenticate with Salesforce org using OAuth 2.0 with PKCE
+- `sma sf disconnect` - Remove stored credentials for an org
+- `sma sf list` - List all connected Salesforce orgs
+
+**Features:**
+- OAuth 2.0 authentication flow with PKCE (RFC 7636)
+- Secure credential storage using system keyring
+- Multi-org support with connection aliases
+- Token refresh functionality
+- Support for both production and sandbox environments
+
+See: [salesforce-authentication.md](documentation/features/salesforce-authentication.md)
+
+### Phase 2: Metadata Synchronization (✅ Implemented)
+
+**Commands:**
+- `sma sf sync` - Sync metadata from Salesforce to local database
+- `sma sf browse` - Launch web-based database browser (datasette)
+
+**Features:**
+- Real-time metadata retrieval via Salesforce REST and Tooling APIs
+- Local SQLite caching for offline access
+- Incremental sync with last-modified tracking
+- Support for: Custom Objects, Fields, Flows, Process Builders, Validation Rules, Apex Classes/Triggers
+- Interactive database browser with search and export capabilities
+
+See: [metadata-sync.md](documentation/features/metadata-sync.md) and [database-browser.md](documentation/features/database-browser.md)
+
+### Future Phases (📋 Planned)
+
+The following features are planned for future releases:
+- Field/object/flow dependency graph visualization
 - Apex code analysis and indexing
+- Impact analysis for field and object changes
 - Azure DevOps repository integration
 - CLI autocomplete for Salesforce objects and fields
+- Automated change documentation
 
-See [REQUIREMENTS.md](documentation/REQUIREMENTS.md) for complete MVP specifications and user requirements.
+See [requirements.md](documentation/requirements.md) for complete roadmap and specifications.
 
 ## Windows-Specific Notes
 

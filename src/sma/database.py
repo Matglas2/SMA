@@ -159,6 +159,234 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_field_reference ON fields(reference_to)
         """)
 
+        # ===== Phase 3: Dependency and Relationship Tables =====
+
+        # Table for field dependencies (central dependency tracking)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sf_field_dependencies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_alias TEXT NOT NULL,
+                object_name TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                dependent_type TEXT NOT NULL,
+                dependent_id TEXT NOT NULL,
+                dependent_name TEXT,
+                reference_type TEXT,
+                line_number INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_verified DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_dep_object_field
+            ON sf_field_dependencies(object_name, field_name)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_dep_dependent
+            ON sf_field_dependencies(dependent_type, dependent_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_dep_alias
+            ON sf_field_dependencies(connection_alias)
+        """)
+
+        # Table for detailed flow field references
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sf_flow_field_references (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                flow_id TEXT NOT NULL,
+                flow_api_name TEXT NOT NULL,
+                flow_version INTEGER,
+                object_name TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                element_name TEXT,
+                element_type TEXT,
+                is_input BOOLEAN DEFAULT 0,
+                is_output BOOLEAN DEFAULT 0,
+                variable_name TEXT,
+                xpath_location TEXT,
+                extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flow_ref_flow
+            ON sf_flow_field_references(flow_id, flow_version)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flow_ref_field
+            ON sf_flow_field_references(object_name, field_name)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flow_ref_element_type
+            ON sf_flow_field_references(element_type)
+        """)
+
+        # Table for field relationships (lookups, master-detail, etc.)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sf_field_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_alias TEXT NOT NULL,
+                source_object TEXT NOT NULL,
+                source_field TEXT NOT NULL,
+                relationship_type TEXT NOT NULL,
+                target_object TEXT,
+                target_field TEXT,
+                relationship_name TEXT,
+                is_cascade_delete BOOLEAN DEFAULT 0,
+                is_reparentable BOOLEAN DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_rel_source
+            ON sf_field_relationships(source_object, source_field)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_rel_target
+            ON sf_field_relationships(target_object)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_rel_type
+            ON sf_field_relationships(relationship_type)
+        """)
+
+        # Table for object-level relationships
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sf_object_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_alias TEXT NOT NULL,
+                parent_object TEXT NOT NULL,
+                child_object TEXT NOT NULL,
+                relationship_field TEXT NOT NULL,
+                relationship_type TEXT NOT NULL,
+                relationship_name TEXT,
+                child_count_estimate INTEGER
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_obj_rel_parent
+            ON sf_object_relationships(parent_object)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_obj_rel_child
+            ON sf_object_relationships(child_object)
+        """)
+
+        # Table for enhanced trigger metadata
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sf_trigger_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trigger_id TEXT UNIQUE NOT NULL,
+                trigger_name TEXT NOT NULL,
+                object_name TEXT NOT NULL,
+                is_before_insert BOOLEAN DEFAULT 0,
+                is_before_update BOOLEAN DEFAULT 0,
+                is_before_delete BOOLEAN DEFAULT 0,
+                is_after_insert BOOLEAN DEFAULT 0,
+                is_after_update BOOLEAN DEFAULT 0,
+                is_after_delete BOOLEAN DEFAULT 0,
+                is_after_undelete BOOLEAN DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                created_date DATETIME,
+                last_modified_date DATETIME,
+                synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trigger_meta_object
+            ON sf_trigger_metadata(object_name)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trigger_meta_active
+            ON sf_trigger_metadata(is_active)
+        """)
+
+        # Table for enhanced flow metadata
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sf_flow_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                flow_id TEXT NOT NULL,
+                flow_api_name TEXT NOT NULL,
+                flow_label TEXT,
+                process_type TEXT,
+                trigger_type TEXT,
+                trigger_object TEXT,
+                is_active BOOLEAN DEFAULT 0,
+                is_template BOOLEAN DEFAULT 0,
+                version_number INTEGER,
+                status TEXT,
+                element_count INTEGER,
+                decision_count INTEGER,
+                has_record_lookups BOOLEAN DEFAULT 0,
+                has_record_updates BOOLEAN DEFAULT 0,
+                has_record_creates BOOLEAN DEFAULT 0,
+                has_record_deletes BOOLEAN DEFAULT 0,
+                last_modified_date DATETIME,
+                synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                xml_parsed_at DATETIME,
+                UNIQUE(flow_api_name, version_number)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flow_meta_api_version
+            ON sf_flow_metadata(flow_api_name, version_number)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flow_meta_trigger_obj
+            ON sf_flow_metadata(trigger_object)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_flow_meta_active
+            ON sf_flow_metadata(is_active)
+        """)
+
+        # Table for automation coverage summary
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sf_automation_coverage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_alias TEXT NOT NULL,
+                object_name TEXT NOT NULL,
+                field_name TEXT,
+                has_flows BOOLEAN DEFAULT 0,
+                flow_count INTEGER DEFAULT 0,
+                has_triggers BOOLEAN DEFAULT 0,
+                trigger_count INTEGER DEFAULT 0,
+                has_validation_rules BOOLEAN DEFAULT 0,
+                validation_rule_count INTEGER DEFAULT 0,
+                has_process_builders BOOLEAN DEFAULT 0,
+                process_builder_count INTEGER DEFAULT 0,
+                total_automation_count INTEGER DEFAULT 0,
+                last_computed DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(connection_alias, object_name, field_name)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auto_cov_object
+            ON sf_automation_coverage(object_name)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auto_cov_field
+            ON sf_automation_coverage(object_name, field_name)
+        """)
+
         self.conn.commit()
         self._seed_quotes(cursor)
 
