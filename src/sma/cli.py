@@ -323,17 +323,28 @@ def sf_disconnect(alias):
 
 
 @salesforce.command(name='sync')
-@click.option('--objects-only', is_flag=True, help='Sync only objects (skip fields)')
-def sf_sync(objects_only):
+@click.option('--objects-only', is_flag=True, help='Sync only objects (skip fields, flows, etc.)')
+@click.option('--fields-only', is_flag=True, help='Sync only fields (requires objects to exist)')
+@click.option('--flows-only', is_flag=True, help='Sync only flows')
+@click.option('--triggers-only', is_flag=True, help='Sync only triggers')
+@click.option('--relationships-only', is_flag=True, help='Sync only field relationships')
+def sf_sync(objects_only, fields_only, flows_only, triggers_only, relationships_only):
     """Sync Salesforce metadata to local database.
 
     Downloads object and field metadata from Salesforce and stores
     it locally for fast querying. Run this after connecting to populate
     the database with metadata.
 
-    Example:
-        sma sf sync                    # Sync all metadata
-        sma sf sync --objects-only     # Sync only objects
+    Examples:
+        sma sf sync                        # Sync all metadata
+        sma sf sync --objects-only         # Sync only objects
+        sma sf sync --fields-only          # Sync only fields
+        sma sf sync --flows-only           # Sync only flows
+        sma sf sync --triggers-only        # Sync only triggers
+        sma sf sync --relationships-only   # Sync only relationships
+        sma sf sync --flows-only --triggers-only  # Sync flows and triggers
+
+    Note: You can combine multiple flags to sync specific metadata types.
     """
     try:
         with Database() as db:
@@ -359,13 +370,57 @@ def sf_sync(objects_only):
             # Create metadata sync instance
             metadata_sync = MetadataSync(sf_client, db.conn, status['org_id'], status['org_name'])
 
-            if objects_only:
-                console.print("\n[bold cyan]Syncing objects only...[/bold cyan]\n")
-                count = metadata_sync.sync_sobjects()
-                console.print(f"\n[bold green]✓ Synced {count} objects![/bold green]\n")
+            # Determine what to sync
+            any_specific_flag = objects_only or fields_only or flows_only or triggers_only or relationships_only
+
+            if any_specific_flag:
+                # Selective sync based on flags
+                console.print("\n[bold cyan]Starting selective metadata sync...[/bold cyan]\n")
+                result = {}
+
+                if objects_only:
+                    console.print("[cyan]Syncing objects...[/cyan]")
+                    result['objects'] = metadata_sync.sync_sobjects()
+                    console.print(f"[green]✓[/green] Synced {result['objects']} objects\n")
+
+                if fields_only:
+                    console.print("[cyan]Syncing fields...[/cyan]")
+                    result['fields'] = metadata_sync.sync_fields()
+                    console.print(f"[green]✓[/green] Synced {result['fields']} fields\n")
+
+                if flows_only:
+                    console.print("[cyan]Syncing flows...[/cyan]")
+                    result['flows'] = metadata_sync.sync_flows_with_dependencies()
+                    console.print(f"[green]✓[/green] Synced {result['flows']} flows\n")
+
+                if triggers_only:
+                    console.print("[cyan]Syncing triggers...[/cyan]")
+                    result['triggers'] = metadata_sync.sync_trigger_metadata()
+                    console.print(f"[green]✓[/green] Synced {result['triggers']} triggers\n")
+
+                if relationships_only:
+                    console.print("[cyan]Syncing relationships...[/cyan]")
+                    result['relationships'] = metadata_sync.sync_field_relationships()
+                    console.print(f"[green]✓[/green] Synced {result['relationships']} relationships\n")
+
+                # Show summary
+                console.print("[bold green]✓ Selective sync complete![/bold green]\n")
+                console.print("[bold]Synced:[/bold]")
+                if 'objects' in result:
+                    console.print(f"  Objects:       [green]{result['objects']}[/green]")
+                if 'fields' in result:
+                    console.print(f"  Fields:        [green]{result['fields']}[/green]")
+                if 'flows' in result:
+                    console.print(f"  Flows:         [green]{result['flows']}[/green]")
+                if 'triggers' in result:
+                    console.print(f"  Triggers:      [green]{result['triggers']}[/green]")
+                if 'relationships' in result:
+                    console.print(f"  Relationships: [green]{result['relationships']}[/green]")
+                console.print()
+
             else:
-                # Sync all metadata
-                console.print("\n[bold cyan]Starting metadata sync...[/bold cyan]\n")
+                # Sync all metadata (default behavior)
+                console.print("\n[bold cyan]Starting full metadata sync...[/bold cyan]\n")
                 result = metadata_sync.sync_all()
 
                 # Show summary

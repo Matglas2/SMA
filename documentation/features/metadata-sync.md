@@ -51,10 +51,14 @@ You can now query metadata using future commands or browse the database:
   sma db browse
 ```
 
-### Sync Objects Only
+### Selective Sync Options
+
+You can selectively sync specific metadata types using the following options:
+
+#### Sync Objects Only
 
 ```bash
-# Sync only object metadata (skip fields)
+# Sync only object metadata (skip fields, flows, etc.)
 sma sf sync --objects-only
 ```
 
@@ -65,10 +69,101 @@ sma sf sync --objects-only
 
 **Example Output:**
 ```
-Syncing objects only...
+Starting selective metadata sync...
 
-✓ Synced 347 objects!
+Syncing objects...
+✓ Synced 347 objects
+
+✓ Selective sync complete!
+
+Synced:
+  Objects:       347
 ```
+
+#### Sync Fields Only
+
+```bash
+# Sync only field metadata (requires objects to exist)
+sma sf sync --fields-only
+```
+
+**Use cases:**
+- Refresh field metadata without re-syncing objects
+- Quick field metadata update after schema changes
+- Faster sync when only field changes occurred
+
+**Note:** Objects must already be synced for this to work.
+
+#### Sync Flows Only
+
+```bash
+# Sync only Flow definitions and field references
+sma sf sync --flows-only
+```
+
+**Use cases:**
+- Refresh Flow metadata after Flow changes
+- Re-parse Flows after fixing extraction issues
+- Quick Flow-only sync without full metadata refresh
+
+**Example Output:**
+```
+Starting selective metadata sync...
+
+Syncing flows...
+Found 45 active flows to process
+Processing flow 1/45: Account_Email_Validation
+Processing flow 2/45: Contact_Update_Process
+...
+✓ Synced 45 flows
+
+✓ Selective sync complete!
+
+Synced:
+  Flows:         45
+```
+
+#### Sync Triggers Only
+
+```bash
+# Sync only Apex trigger metadata
+sma sf sync --triggers-only
+```
+
+**Use cases:**
+- Refresh trigger inventory after deployment
+- Quick trigger metadata update
+- Verify trigger activation status
+
+#### Sync Relationships Only
+
+```bash
+# Sync only field relationship mappings
+sma sf sync --relationships-only
+```
+
+**Use cases:**
+- Refresh relationship graph after schema changes
+- Update lookup/master-detail mappings
+- Quick relationship metadata refresh
+
+#### Combine Multiple Options
+
+```bash
+# Sync flows and triggers together
+sma sf sync --flows-only --triggers-only
+
+# Sync fields and relationships
+sma sf sync --fields-only --relationships-only
+
+# Sync everything except objects
+sma sf sync --fields-only --flows-only --triggers-only --relationships-only
+```
+
+**Use cases:**
+- Granular control over what gets synced
+- Faster partial updates after specific changes
+- Troubleshooting sync issues with individual components
 
 ## What Gets Synced
 
