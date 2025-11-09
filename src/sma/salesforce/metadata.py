@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 from typing import Dict, List, Optional
+from urllib.parse import quote
 from simple_salesforce import Salesforce
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -412,12 +413,9 @@ class MetadataSync:
 
         try:
             # Query for Flow definitions using Tooling API
-            query = """
-                SELECT Id, DeveloperName, MasterLabel, ProcessType, ActiveVersionId, LatestVersionId, Description
-                FROM FlowDefinition
-                WHERE IsActive = true
-            """
-            result = self.sf.toolingexecute(f"query/?q={query}")
+            query = "SELECT Id, DeveloperName, MasterLabel, ProcessType, ActiveVersionId, LatestVersionId, Description FROM FlowDefinition WHERE IsActive = true"
+            encoded_query = quote(query)
+            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
             flow_definitions = result.get('records', [])
 
             for flow_def in flow_definitions:
@@ -445,12 +443,9 @@ class MetadataSync:
             Flow version record with metadata
         """
         try:
-            query = f"""
-                SELECT Id, Definition.DeveloperName, VersionNumber, Status, Metadata
-                FROM Flow
-                WHERE Id = '{version_id}'
-            """
-            result = self.sf.toolingexecute(f"query/?q={query}")
+            query = f"SELECT Id, Definition.DeveloperName, VersionNumber, Status, Metadata FROM Flow WHERE Id = '{version_id}'"
+            encoded_query = quote(query)
+            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
             records = result.get('records', [])
             return records[0] if records else None
         except Exception as e:
@@ -545,12 +540,9 @@ class MetadataSync:
 
         try:
             # Query for active Apex triggers using Tooling API
-            query = """
-                SELECT Id, Name, TableEnumOrId, Status, ApiVersion, CreatedDate, LastModifiedDate, Body
-                FROM ApexTrigger
-                WHERE Status = 'Active'
-            """
-            result = self.sf.toolingexecute(f"query/?q={query}")
+            query = "SELECT Id, Name, TableEnumOrId, Status, ApiVersion, CreatedDate, LastModifiedDate, Body FROM ApexTrigger WHERE Status = 'Active'"
+            encoded_query = quote(query)
+            result = self.sf.toolingexecute(f"query/?q={encoded_query}")
             triggers = result.get('records', [])
 
             for trigger in triggers:
